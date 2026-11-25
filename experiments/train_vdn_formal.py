@@ -2,6 +2,8 @@
 
 import argparse
 import copy
+import csv
+from contextlib import nullcontext
 import gzip
 import json
 import math
@@ -130,12 +132,19 @@ def collect(pool, model, games, rng, epsilon, mode, chunk_size):
 
 def create_layouts(args):
     all_layouts = [(x / 8, y / 8) for x in range(64, 93) for y in range(100, 157)]
+    if args.exclude_archived_layouts:
+        archive = Path(__file__).resolve().parents[1] / "docs" / "data" / "test-outcomes.csv"
+        with archive.open(encoding="utf-8", newline="") as file:
+            used = {(float(row["x"]), float(row["y"])) for row in csv.DictReader(file)}
+        all_layouts = [point for point in all_layouts if point not in used]
     rng = np.random.default_rng(args.seed)
     rng.shuffle(all_layouts)
     # Reserve unseen layouts for formal evaluation. The pilot used a half-unit grid.
     new_layouts = [point for point in all_layouts if any(coord % 0.5 for coord in point)]
     validation = new_layouts[:args.val_rounds]
     test = new_layouts[args.val_rounds:args.val_rounds + args.test_rounds]
+    if len(validation) != args.val_rounds or len(test) != args.test_rounds:
+        raise ValueError("Not enough disjoint validation and test layouts")
     reserved = set(validation + test)
     training = [point for point in all_layouts if point not in reserved]
     return training, validation, test
@@ -163,7 +172,7 @@ def did_converge(checks, min_steps):
     windows = checks[-PLATEAU_CHECKS:]
     win_rates = [row["win_rate"] for row in windows]
     rewards = [row["mean_return"] for row in windows]
-    opponent_series = zip(*(row["opponent_win_rates"].values() for row in windows))
+    opponent_series = ([row["opponent_win_rates"][name] for row in windows] for name, _ in OPPONENTS)
     return (
         max(win_rates) - min(win_rates) <= WIN_RATE_SPREAD
         and max(rewards) - min(rewards) <= RETURN_SPREAD
@@ -224,6 +233,26 @@ def evaluate_final(args, pool, original, learner, layouts, metrics):
     })
 
 
+def validate(args, pool, learner, layouts, rng, progress, stream, milestone):
+    games = evaluation_games(layouts, np.random.default_rng(args.seed + 2))
+    rows = [row for row, _, _ in collect(pool, learner.net, games, rng, 0.0, "validation", 18)]
+    steps = progress["training_steps"]
+    check = {"milestone": milestone, **summarize_validation(rows, steps)}
+    progress["validation"].append(check)
+    progress["converged"] = did_converge(progress["validation"], args.min_steps)
+    if stream is not None:
+        for row in rows:
+            stream.write(json.dumps({"milestone": milestone, "training_steps": steps, **row}) + "\n")
+        stream.flush()
+        progress["validation_log_offset"] = stream.tell()
+        checkpoint_dir = args.output / "checkpoints"
+        checkpoint_dir.mkdir(exist_ok=True)
+        torch.save(learner.net.state_dict(), checkpoint_dir / f"step-{milestone:07d}.th")
+    atomic_json(args.output / "validation.json", progress["validation"])
+    print(f"Validation {steps:,}: win={check['win_rate']:.3%}, "
+          f"return={check['mean_return']:.3f}, converged={progress['converged']}", flush=True)
+
+
 def train(args):
     torch.set_num_threads(2)
     torch.manual_seed(args.seed)
@@ -236,15 +265,31 @@ def train(args):
     original = copy.deepcopy(learner.net).requires_grad_(False)
     checkpoint = args.output / "resume.pt"
     episode_path = args.output / "training_episodes.jsonl"
+    validation_path = args.output / "validation_episodes.jsonl"
+    training_opponents = tuple(entry for entry in OPPONENTS
+                               if args.train_opponent is None or entry[0] == args.train_opponent)
+    lr_horizon = args.lr_horizon or args.min_steps
     progress = {"training_steps": 0, "episodes": 0, "rounds": 0, "validation": [], "converged": False}
     if args.resume:
+        config = json.loads((args.output / "config.json").read_text(encoding="utf-8"))
+        fields = ("seed", "train_opponent", "steps_per_update", "exclude_archived_layouts",
+                  "defer_final_test", "lr_horizon", "val_interval", "val_rounds", "test_rounds")
+        defaults = {"train_opponent": None, "steps_per_update": 0, "exclude_archived_layouts": False,
+                    "defer_final_test": False, "lr_horizon": None}
+        if any(config.get(key, defaults.get(key)) != getattr(args, key) for key in fields):
+            raise ValueError("Resume arguments changed the training or evaluation protocol")
         progress, log_offset = restore_checkpoint(checkpoint, learner, rng)
+        progress["converged"] = did_converge(progress["validation"], args.min_steps)
         with episode_path.open("r+b") as file:
             file.truncate(log_offset)
+        if args.defer_final_test and validation_path.exists():
+            with validation_path.open("r+b") as file:
+                file.truncate(progress.get("validation_log_offset", 0))
     else:
         args.output.mkdir(parents=True, exist_ok=False)
         save_json(args.output / "config.json", {
             **vars(args), "output": str(args.output), "opponents": OPPONENTS,
+            "training_opponents": training_opponents,
             "validation_layouts": validation_layouts, "test_layouts": test_layouts,
             "training_layout_count": len(train_layouts), "batch_size": BATCH_SIZE,
             "replay_size": REPLAY_SIZE, "target_update": TARGET_UPDATE,
@@ -258,17 +303,23 @@ def train(args):
     started = time.monotonic()
     initial_steps = progress["training_steps"]
     workers = multiprocessing.get_context("spawn")
+    validation_stream = validation_path.open("a", encoding="utf-8") if args.defer_final_test else nullcontext()
     with ProcessPoolExecutor(max_workers=args.actors, mp_context=workers, initializer=init_actor,
-                             initargs=(args.seed,)) as pool, episode_path.open("a", encoding="utf-8") as log:
+                             initargs=(args.seed,)) as pool, episode_path.open("a", encoding="utf-8") as log, \
+            validation_stream as evaluations:
+        if args.defer_final_test and not progress["validation"]:
+            validate(args, pool, learner, validation_layouts, rng, progress, evaluations, 0)
+            save_checkpoint(checkpoint, learner, progress, rng, log)
+        chunk_size = len(OPPONENTS) * args.rounds_per_actor
         while progress["training_steps"] < args.max_steps and not progress["converged"]:
             steps = progress["training_steps"]
             games = [
-                (opponent, train_layouts[int(rng.integers(len(train_layouts)))])
-                for _ in range(args.actors * args.rounds_per_actor) for opponent in OPPONENTS
+                (training_opponents[index % len(training_opponents)],
+                 train_layouts[int(rng.integers(len(train_layouts)))])
+                for index in range(args.actors * chunk_size)
             ]
             rng.shuffle(games)
             epsilon = max(0.05, 0.25 - 0.20 * steps / 250_000)
-            chunk_size = len(OPPONENTS) * args.rounds_per_actor
             for row, _, sample in collect(pool, learner.net, games, rng, epsilon, "train", chunk_size):
                 learner.replay.append(sample)
                 progress["training_steps"] += row["steps"]
@@ -276,23 +327,20 @@ def train(args):
                 log.write(json.dumps({"training_steps": progress["training_steps"], **row}) + "\n")
             progress["rounds"] += 1
             steps = progress["training_steps"]
-            lr = learning_rate(steps, args.min_steps)
+            lr = learning_rate(steps, lr_horizon)
             learner.optimizer.param_groups[0]["lr"] = lr
-            if steps >= WARMUP_STEPS and len(learner.replay) >= learner.batch_size:
-                losses = [learner.update(rng) for _ in range(len(games) // 2)]
+            updates = len(games) // 2
+            if args.steps_per_update:
+                updates = max(0, (steps - WARMUP_STEPS) // args.steps_per_update - learner.updates)
+            if updates and steps >= WARMUP_STEPS and len(learner.replay) >= learner.batch_size:
+                losses = [learner.update(rng) for _ in range(updates)]
                 if not np.isfinite(losses).all():
                     raise RuntimeError("Non-finite training loss")
                 progress["last_td_loss"] = float(np.mean(losses))
-            needs_validation = steps >= min(next_validation, args.max_steps)
+            milestone = min(next_validation, args.max_steps)
+            needs_validation = steps >= milestone
             if needs_validation:
-                games = evaluation_games(validation_layouts, np.random.default_rng(args.seed + 2))
-                rows = [row for row, _, _ in collect(pool, learner.net, games, rng, 0.0, "validation", 18)]
-                check = summarize_validation(rows, steps)
-                progress["validation"].append(check)
-                progress["converged"] = did_converge(progress["validation"], args.min_steps)
-                atomic_json(args.output / "validation.json", progress["validation"])
-                print(f"Validation {steps:,}: win={check['win_rate']:.3%}, "
-                      f"return={check['mean_return']:.3f}, converged={progress['converged']}", flush=True)
+                validate(args, pool, learner, validation_layouts, rng, progress, evaluations, milestone)
                 next_validation = (steps // args.val_interval + 1) * args.val_interval
             if needs_validation or steps >= next_save:
                 save_checkpoint(checkpoint, learner, progress, rng, log)
@@ -307,6 +355,10 @@ def train(args):
         metrics = {**progress, "optimizer_updates": learner.updates}
         if progress["converged"]:
             torch.save(learner.net.state_dict(), args.output / "agent.th")
+        if args.defer_final_test and progress["converged"]:
+            atomic_json(args.output / "status.json", {**metrics, "state": "ready_for_evaluation"})
+            print("Validation passed and policy frozen for the later test.", flush=True)
+        elif progress["converged"]:
             atomic_json(args.output / "status.json", {**metrics, "state": "testing"})
             evaluate_final(args, pool, original, learner, test_layouts, metrics)
             atomic_json(args.output / "status.json", {**metrics, "state": "complete"})
@@ -328,11 +380,21 @@ if __name__ == "__main__":
     parser.add_argument("--save-interval", type=int, default=25_000)
     parser.add_argument("--val-rounds", type=int, default=72)
     parser.add_argument("--test-rounds", type=int, default=144)
+    parser.add_argument("--train-opponent", choices=[name for name, _ in OPPONENTS],
+                        help="Train with this fixed opponent; validation always uses the full pool.")
+    parser.add_argument("--steps-per-update", type=int, default=0,
+                        help="Use one optimizer update per this many steps after warmup.")
+    parser.add_argument("--lr-horizon", type=int, help="Learning-rate decay horizon.")
+    parser.add_argument("--exclude-archived-layouts", action="store_true")
+    parser.add_argument("--defer-final-test", action="store_true",
+                        help="Record validation games and freeze checkpoints for a later final test.")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     if min(args.actors, args.rounds_per_actor, args.min_steps, args.val_interval,
            args.save_interval, args.val_rounds, args.test_rounds) < 1:
         parser.error("counts and intervals must be positive")
+    if args.steps_per_update < 0 or (args.lr_horizon is not None and args.lr_horizon < 1):
+        parser.error("Invalid update cadence or learning-rate horizon")
     if args.max_steps < args.min_steps:
         parser.error("max-steps must be at least min-steps")
     if args.val_rounds + args.test_rounds > 1533:

@@ -1,0 +1,9 @@
+policy,games,red_wins,blue_wins,draws
+qmix,144,51,59,34
+vdn,144,30,34,80
+dop,144,53,56,35
+fop,144,48,53,43
+qplex,144,58,58,28
+coma,144,39,46,59
+iql,144,66,56,22
+qtran,144,44,42,58

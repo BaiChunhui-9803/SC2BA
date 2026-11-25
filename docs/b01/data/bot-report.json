@@ -1,0 +1,77 @@
+{
+  "scenario": "3m",
+  "game_version": "5.0.16.97425",
+  "bot_difficulty": "7",
+  "agent_camp": "red",
+  "layouts": 144,
+  "games": 1152,
+  "workers": 8,
+  "elapsed_seconds": 41.45,
+  "rows": [
+    {
+      "policy": "dop",
+      "games": 144,
+      "wins": 104,
+      "losses": 40,
+      "draws": 0,
+      "win_rate": 0.7222222222222222
+    },
+    {
+      "policy": "qmix",
+      "games": 144,
+      "wins": 99,
+      "losses": 45,
+      "draws": 0,
+      "win_rate": 0.6875
+    },
+    {
+      "policy": "vdn",
+      "games": 144,
+      "wins": 94,
+      "losses": 50,
+      "draws": 0,
+      "win_rate": 0.6527777777777778
+    },
+    {
+      "policy": "iql",
+      "games": 144,
+      "wins": 91,
+      "losses": 53,
+      "draws": 0,
+      "win_rate": 0.6319444444444444
+    },
+    {
+      "policy": "qplex",
+      "games": 144,
+      "wins": 78,
+      "losses": 66,
+      "draws": 0,
+      "win_rate": 0.5416666666666666
+    },
+    {
+      "policy": "fop",
+      "games": 144,
+      "wins": 77,
+      "losses": 67,
+      "draws": 0,
+      "win_rate": 0.5347222222222222
+    },
+    {
+      "policy": "qtran",
+      "games": 144,
+      "wins": 76,
+      "losses": 68,
+      "draws": 0,
+      "win_rate": 0.5277777777777778
+    },
+    {
+      "policy": "coma",
+      "games": 144,
+      "wins": 49,
+      "losses": 95,
+      "draws": 0,
+      "win_rate": 0.3402777777777778
+    }
+  ],
+  "script_sha256": "1ae7a7a1b9a2050fcff1c1156f4e2ab400f8bd4a5b2505e92d4e7287cb2fe82a"
+}

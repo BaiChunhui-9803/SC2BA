@@ -174,3 +174,5 @@ tfoot th { font-size: 13px; }
 .hero { border-radius: 11px 11px 0 0; }
 .pool-source { margin-top: 6px; }
 .pool-source a { color: #c3d9f0; text-decoration: underline; text-underline-offset: 2px; }
+
+.timeline details + details { margin-top: 12px; }

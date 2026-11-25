@@ -1,0 +1,33 @@
+.matrix-release { margin-bottom: 42px; }
+.b01-matrix { min-width: 650px; table-layout: fixed; }
+.b01-matrix th, .b01-matrix td { text-align: center; padding: 4px 3px; }
+.b01-matrix th:first-child { text-align: left; padding-left: 8px; width: 85px; }
+.b01-matrix td { height: 48px; }
+.b01-cell, .b01-diagonal {
+  display: grid;
+  width: 100%;
+  min-height: 37px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font: 600 13px var(--mono);
+}
+.b01-cell { background: var(--heat); color: #f5f9ff; }
+.b01-cell:hover, .b01-cell[aria-pressed="true"] { border-color: #dbfff4; }
+.b01-diagonal { background: #172337; color: var(--muted); }
+.matrix-legend { display: flex; gap: 8px; align-items: center; margin: 0 0 11px; color: var(--muted); font-size: 12px; }
+.matrix-legend span:nth-child(2) { width: 105px; height: 9px; border-radius: 6px; background: linear-gradient(90deg,#5b3157,#264064,#177c70); }
+.match-detail { display: grid; grid-template-columns: minmax(100px,.9fr) repeat(3,minmax(120px,1fr)); gap: 10px; margin-top: 12px; padding: 11px 12px; background: #142338; border-radius: 6px; }
+.match-detail dt { color: var(--muted); font-size: 12px; }
+.match-detail dd { margin: 0; color: var(--text); font: 600 13px var(--mono); }
+.ranking-list { margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px; list-style: none; }
+.ranking-list li { display: grid; grid-template-columns: 60px 1fr 62px; align-items: center; gap: 7px; color: var(--text); font-size: 13px; }
+.ranking-list strong { text-align: right; color: var(--cyan); font-variant-numeric: tabular-nums; }
+.rank-bar { height: 6px; background: #273952; border-radius: 5px; overflow: hidden; }
+.rank-bar i { display: block; height: 100%; background: #53cdb3; border-radius: inherit; }
+.self-play { min-width: 500px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 760px) {
+  .match-detail { grid-template-columns: 1fr 1fr; }
+  .ranking-list { grid-template-columns: 1fr; }
+}

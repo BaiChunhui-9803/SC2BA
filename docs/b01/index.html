@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0c1422">
+  <title>B01 冻结策略两两对抗 · SC2BA Lab</title>
+  <link rel="icon" type="image/png" href="../assets/mark.png">
+  <link rel="stylesheet" href="../assets/panel.css">
+  <link rel="stylesheet" href="./matrix.css">
+  <script defer src="./matrix.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#matrix">跳到胜率矩阵</a>
+  <header class="masthead">
+    <div class="frame masthead-inner">
+      <a class="brand" href="../#timeline"><span class="mark" aria-hidden="true"></span>SC2BA Lab</a>
+      <nav aria-label="面板导航">
+        <a href="../#timeline">实验时间轴</a>
+        <a href="#matrix">胜率矩阵</a>
+        <a href="#self-play">阵营检查</a>
+      </nav>
+    </div>
+  </header>
+  <main class="frame">
+    <header class="page-heading">
+      <p class="run-id">B01 · 2026.11.25</p>
+      <h1>冻结策略两两对抗</h1>
+      <p>3m 镜像出生 · 双 Agent · 每对策略互换红蓝</p>
+    </header>
+    <div id="matrix-error" class="card error" role="alert" hidden></div>
+    <article class="release card matrix-release">
+      <section id="matrix" class="content-section">
+        <div class="section-head">
+          <div>
+            <h2>胜率热力矩阵</h2>
+            <p id="matrix-caption"></p>
+          </div>
+          <a class="button" href="./data/win-rate-matrix.csv" download>下载矩阵 CSV <span aria-hidden="true">↓</span></a>
+        </div>
+        <div class="matrix-legend">
+          <span>0%</span><span aria-label="由低到高的胜率配色"></span><span>100%</span>
+        </div>
+        <div class="table-scroll" role="region" aria-label="胜率热力矩阵，可横向滚动" tabindex="0">
+          <table class="b01-matrix" id="matrix-table"><caption class="visually-hidden">行策略对列策略的胜率</caption></table>
+        </div>
+        <dl class="match-detail" id="match-details" aria-live="polite"></dl>
+      </section>
+      <section id="ranking" class="content-section">
+        <div class="section-head">
+          <div>
+            <h2>等权对手胜率</h2>
+            <p>每个策略对其余七个策略的平均值</p>
+          </div>
+          <a class="button" href="./data/pairwise.csv" download>逐对手明细 <span aria-hidden="true">↓</span></a>
+        </div>
+        <ol class="ranking-list" id="ranking-list"></ol>
+      </section>
+      <section id="self-play" class="content-section">
+        <div class="section-head">
+          <div>
+            <h2>同策略自对抗</h2>
+            <p>每种策略同时控制两边，用于检查阵营差异。</p>
+          </div>
+        </div>
+        <div class="table-scroll" role="region" aria-label="自对抗记录，可横向滚动" tabindex="0">
+          <table class="self-play">
+            <thead><tr><th scope="col">策略</th><th scope="col">局数</th><th scope="col">红胜</th><th scope="col">蓝胜</th><th scope="col">平</th><th scope="col">红胜 − 蓝胜</th></tr></thead>
+            <tbody id="self-play-rows"></tbody>
+          </table>
+        </div>
+      </section>
+      <section id="builtin" class="content-section">
+        <div class="section-head">
+          <div>
+            <h2>内置 Bot 补测</h2>
+            <p id="bot-caption"></p>
+          </div>
+          <a class="button" href="./data/bot-reference.csv" download>下载 Bot 胜率 CSV <span aria-hidden="true">↓</span></a>
+        </div>
+        <div class="table-scroll" role="region" aria-label="内置 Bot 胜率表，可横向滚动" tabindex="0">
+          <table class="self-play">
+            <thead><tr><th scope="col">红方策略</th><th scope="col">胜率</th><th scope="col">胜</th><th scope="col">负</th><th scope="col">平</th><th scope="col">局数</th></tr></thead>
+            <tbody id="bot-rows"></tbody>
+          </table>
+        </div>
+      </section>
+      <footer class="release-footer">
+        <h2>实验数据</h2>
+        <div class="download-links">
+          <a href="./data/matches.csv" download>逐局 CSV <span aria-hidden="true">↓</span></a>
+          <a href="./data/bot-matches.csv" download>Bot 逐局 CSV <span aria-hidden="true">↓</span></a>
+          <a href="./data/self-play.csv" download>自对抗 CSV <span aria-hidden="true">↓</span></a>
+          <a href="./data/protocol.json" download>协议与权重指纹 <span aria-hidden="true">↓</span></a>
+          <a href="./data/report.json" download>结果 JSON <span aria-hidden="true">↓</span></a>
+        </div>
+      </footer>
+    </article>
+  </main>
+</body>
+</html>
