@@ -1,0 +1,9 @@
+{
+  "checked_at": "2026-11-27T17:49:51.7897153+08:00",
+  "v11_scheduler_alive": true,
+  "v11_workers": 6,
+  "v11_sc2": 6,
+  "hrl_workers": 0,
+  "hrl_sc2": 0,
+  "runner_alive": false
+}

@@ -1,0 +1,7 @@
+scenario,regime,train_steps,all9_win_rate,algos8_win_rate,worst3_win_rate,bot_win_rate,mean_hp_margin,K_final,splits,prunes,usage_entropy,mean_clusters,wall_seconds
+3m,pool-all9,40000,25.56,26.25,10.0,20.0,-5.13,15,10,3,2.533,1.0,720.56
+3m,fixed-bot,40000,70.0,76.25,60.0,20.0,8.97,14,10,4,2.21,1.0,700.39
+2s3z,pool-all9,40000,76.67,86.25,76.67,0.0,207.36,18,10,0,2.477,1.3,1125.13
+2s3z,fixed-bot,40000,48.89,55.0,33.33,0.0,103.56,17,10,1,2.323,1.71,868.71
+MM4m,fixed-bot,40000,96.67,96.67,96.67,96.67,31.5,16,10,2,1.634,1.46,659.43
+MM8,fixed-bot,40000,64.17,64.17,64.17,64.17,39.12,18,10,0,1.016,1.0,815.7

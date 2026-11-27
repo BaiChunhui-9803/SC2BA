@@ -1,0 +1,96 @@
+{
+  "checked_at": "2026-11-27T17:35:31.746523+08:00",
+  "status": "passed",
+  "first_arm": "D:\\Binich\\project\\SC2BA-Lab\\hrl_v2\\runs\\mvp_2plus2_steps40000_seed101\\3m\\pool-all9\\seed_101",
+  "reasons": [],
+  "nonfinite_losses": [],
+  "validation": [
+    {
+      "steps": null,
+      "checkpoint_steps": 0,
+      "all9_win_rate": 0.0,
+      "bot_win_rate": 0.0,
+      "mean_hp_margin": -91.33333333333333,
+      "active_prototypes": 8
+    },
+    {
+      "steps": null,
+      "checkpoint_steps": 8192,
+      "all9_win_rate": 0.0,
+      "bot_win_rate": 0.0,
+      "mean_hp_margin": -27.166666666666668,
+      "active_prototypes": 7
+    },
+    {
+      "steps": null,
+      "checkpoint_steps": 16384,
+      "all9_win_rate": 0.0,
+      "bot_win_rate": 0.0,
+      "mean_hp_margin": -14.0,
+      "active_prototypes": 9
+    },
+    {
+      "steps": null,
+      "checkpoint_steps": 24576,
+      "all9_win_rate": 0.0,
+      "bot_win_rate": 0.0,
+      "mean_hp_margin": -12.0,
+      "active_prototypes": 11
+    },
+    {
+      "steps": null,
+      "checkpoint_steps": 32768,
+      "all9_win_rate": 0.2777777777777778,
+      "bot_win_rate": 0.5,
+      "mean_hp_margin": 1.5,
+      "active_prototypes": 13
+    },
+    {
+      "steps": null,
+      "checkpoint_steps": 40000,
+      "all9_win_rate": 0.2222222222222222,
+      "bot_win_rate": 0.0,
+      "mean_hp_margin": -4.333333333333333,
+      "active_prototypes": 15
+    }
+  ],
+  "weighted_train_win_rate": 0.0955096222380613,
+  "last_codebook_update": {
+    "update": 40,
+    "steps": 40000,
+    "low_policy_loss": -0.00522,
+    "low_value_loss": 6.65876,
+    "low_entropy": 0.5384,
+    "up_policy_loss": -0.01341,
+    "up_value_loss": 11.45479,
+    "commit_loss": 0.06334,
+    "bisim_loss": 0.30871,
+    "reward_pred_loss": 5.88994,
+    "active_prototypes": 15,
+    "initialized": true,
+    "usage_entropy": 2.5326,
+    "mean_td_std": 1.8664,
+    "mean_ret_std": 1.952,
+    "mean_spread": 0.8232,
+    "total_splits": 10,
+    "total_merges": 0,
+    "total_prunes": 3,
+    "split_merge_events": [
+      {
+        "update": 40,
+        "event": "split",
+        "parent_slot": 11,
+        "child_slot": 14,
+        "score": 1.974,
+        "td_norm": 1.882,
+        "ret_norm": 1.818,
+        "spread": 1.0668,
+        "k_after": 15
+      }
+    ],
+    "episodes_finished": 3,
+    "train_win_rate": 0.3333333333333333,
+    "lower_samples": 64,
+    "upper_samples": 18
+  }
+}

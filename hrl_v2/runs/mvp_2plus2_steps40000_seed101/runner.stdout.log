@@ -1,0 +1,57 @@
+=== DyIM-CHRL (hrl_v2) Isolated 2+2 MVP Runner ===
+Output root: D:\Binich\project\SC2BA-Lab\hrl_v2\runs\mvp_2plus2_steps40000_seed101 (100% isolated from bch/runs/)
+Jobs queued: 6 | Seed: 101 | Steps: 40000 | Device: cuda
+
+>>> Launching 3m / pool-all9 -> D:\Binich\project\SC2BA-Lab\hrl_v2\runs\mvp_2plus2_steps40000_seed101\3m\pool-all9\seed_101
+[hrl_v2 3m/pool-all9] step=8192/40000 all9=0.000 bot=0.0 K_t=7 clu=2.03
+[hrl_v2 3m/pool-all9] step=16384/40000 all9=0.000 bot=0.0 K_t=9 clu=1.00
+[hrl_v2 3m/pool-all9] step=24576/40000 all9=0.000 bot=0.0 K_t=11 clu=1.00
+[hrl_v2 3m/pool-all9] step=32768/40000 all9=0.278 bot=0.5 K_t=13 clu=1.00
+[hrl_v2 3m/pool-all9] step=40000/40000 all9=0.222 bot=0.0 K_t=15 clu=1.00
+[DONE hrl_v2] 3m | pool-all9 | seed=101 | all9=0.256 | 8algo=0.263 | worst3=0.100 | bot=0.2 | K_final=15 | 720.56s -> D:\Binich\project\SC2BA-Lab\hrl_v2\runs\mvp_2plus2_steps40000_seed101\3m\pool-all9\seed_101
+
+>>> Launching 3m / fixed-bot -> D:\Binich\project\SC2BA-Lab\hrl_v2\runs\mvp_2plus2_steps40000_seed101\3m\fixed-bot\seed_101
+[hrl_v2 3m/fixed-bot] step=8192/40000 all9=0.111 bot=0.0 K_t=6 clu=1.00
+[hrl_v2 3m/fixed-bot] step=16384/40000 all9=0.389 bot=1.0 K_t=8 clu=1.00
+[hrl_v2 3m/fixed-bot] step=24576/40000 all9=0.389 bot=0.5 K_t=10 clu=1.00
+[hrl_v2 3m/fixed-bot] step=32768/40000 all9=0.389 bot=0.5 K_t=12 clu=1.00
+[hrl_v2 3m/fixed-bot] step=40000/40000 all9=0.333 bot=0.5 K_t=14 clu=1.00
+[DONE hrl_v2] 3m | fixed-bot | seed=101 | all9=0.700 | 8algo=0.763 | worst3=0.600 | bot=0.2 | K_final=14 | 700.39s -> D:\Binich\project\SC2BA-Lab\hrl_v2\runs\mvp_2plus2_steps40000_seed101\3m\fixed-bot\seed_101
+
+>>> Launching 2s3z / pool-all9 -> D:\Binich\project\SC2BA-Lab\hrl_v2\runs\mvp_2plus2_steps40000_seed101\2s3z\pool-all9\seed_101
+[hrl_v2 2s3z/pool-all9] step=8192/40000 all9=0.000 bot=0.0 K_t=10 clu=1.00
+[hrl_v2 2s3z/pool-all9] step=16384/40000 all9=0.111 bot=0.0 K_t=12 clu=1.00
+[hrl_v2 2s3z/pool-all9] step=24576/40000 all9=0.556 bot=0.0 K_t=14 clu=1.00
+[hrl_v2 2s3z/pool-all9] step=32768/40000 all9=0.278 bot=0.0 K_t=16 clu=1.38
+[hrl_v2 2s3z/pool-all9] step=40000/40000 all9=0.500 bot=0.0 K_t=18 clu=1.15
+[DONE hrl_v2] 2s3z | pool-all9 | seed=101 | all9=0.767 | 8algo=0.863 | worst3=0.767 | bot=0.0 | K_final=18 | 1125.13s -> D:\Binich\project\SC2BA-Lab\hrl_v2\runs\mvp_2plus2_steps40000_seed101\2s3z\pool-all9\seed_101
+
+>>> Launching 2s3z / fixed-bot -> D:\Binich\project\SC2BA-Lab\hrl_v2\runs\mvp_2plus2_steps40000_seed101\2s3z\fixed-bot\seed_101
+[hrl_v2 2s3z/fixed-bot] step=8192/40000 all9=0.222 bot=0.0 K_t=10 clu=2.21
+[hrl_v2 2s3z/fixed-bot] step=16384/40000 all9=0.167 bot=0.0 K_t=12 clu=1.05
+[hrl_v2 2s3z/fixed-bot] step=24576/40000 all9=0.167 bot=0.0 K_t=13 clu=2.44
+[hrl_v2 2s3z/fixed-bot] step=32768/40000 all9=0.556 bot=0.0 K_t=15 clu=2.32
+[hrl_v2 2s3z/fixed-bot] step=40000/40000 all9=0.444 bot=0.0 K_t=17 clu=1.68
+[DONE hrl_v2] 2s3z | fixed-bot | seed=101 | all9=0.489 | 8algo=0.550 | worst3=0.333 | bot=0.0 | K_final=17 | 868.71s -> D:\Binich\project\SC2BA-Lab\hrl_v2\runs\mvp_2plus2_steps40000_seed101\2s3z\fixed-bot\seed_101
+
+>>> Launching MM4m / fixed-bot -> D:\Binich\project\SC2BA-Lab\hrl_v2\runs\mvp_2plus2_steps40000_seed101\MM4m\fixed-bot\seed_101
+pygame 2.6.1 (SDL 2.28.4, Python 3.10.20)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+[hrl_v2 MM4m/fixed-bot] step=8192/40000 all9=0.000 bot=0.0 K_t=9 clu=1.17
+[hrl_v2 MM4m/fixed-bot] step=16384/40000 all9=0.267 bot=0.26666666666666666 K_t=11 clu=1.42
+[hrl_v2 MM4m/fixed-bot] step=24576/40000 all9=0.633 bot=0.6333333333333333 K_t=13 clu=1.61
+[hrl_v2 MM4m/fixed-bot] step=32768/40000 all9=1.000 bot=1.0 K_t=14 clu=1.66
+[hrl_v2 MM4m/fixed-bot] step=40000/40000 all9=0.933 bot=0.9333333333333333 K_t=16 clu=1.49
+[DONE hrl_v2] MM4m | fixed-bot | seed=101 | all9=0.967 | 8algo=0.967 | worst3=0.967 | bot=0.9666666666666667 | K_final=16 | 659.43s -> D:\Binich\project\SC2BA-Lab\hrl_v2\runs\mvp_2plus2_steps40000_seed101\MM4m\fixed-bot\seed_101
+
+>>> Launching MM8 / fixed-bot -> D:\Binich\project\SC2BA-Lab\hrl_v2\runs\mvp_2plus2_steps40000_seed101\MM8\fixed-bot\seed_101
+pygame 2.6.1 (SDL 2.28.4, Python 3.10.20)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+[hrl_v2 MM8/fixed-bot] step=8192/40000 all9=0.100 bot=0.1 K_t=10 clu=1.07
+[hrl_v2 MM8/fixed-bot] step=16384/40000 all9=0.733 bot=0.7333333333333333 K_t=12 clu=1.00
+[hrl_v2 MM8/fixed-bot] step=24576/40000 all9=0.467 bot=0.4666666666666667 K_t=14 clu=1.84
+[hrl_v2 MM8/fixed-bot] step=32768/40000 all9=0.767 bot=0.7666666666666667 K_t=16 clu=1.00
+[hrl_v2 MM8/fixed-bot] step=40000/40000 all9=0.467 bot=0.4666666666666667 K_t=18 clu=1.00
+[DONE hrl_v2] MM8 | fixed-bot | seed=101 | all9=0.642 | 8algo=0.642 | worst3=0.642 | bot=0.6416666666666667 | K_final=18 | 815.7s -> D:\Binich\project\SC2BA-Lab\hrl_v2\runs\mvp_2plus2_steps40000_seed101\MM8\fixed-bot\seed_101
+
+=== All selected DyIM-CHRL MVP jobs completed cleanly ===

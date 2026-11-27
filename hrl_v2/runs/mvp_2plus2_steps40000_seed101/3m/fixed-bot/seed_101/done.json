@@ -1,0 +1,1 @@
+{"scenario":"3m","regime":"fixed-bot","seed":101,"train_steps":40000,"all9_win_rate":0.7,"bot_win_rate":0.2,"active_prototypes":14,"wall_seconds":700.39}

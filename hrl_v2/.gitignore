@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+runs/**/*.pt
+runs/smoke_real/
+runs/**/val_episodes.jsonl
+runs/**/final_eval_episodes.jsonl
+runs/**/train_log.jsonl
+runs/**/pk_matches.jsonl
+figures/*.aux
+figures/*.log
