@@ -19,6 +19,20 @@ from .observation import Observation, Unit
 
 OPPONENTS = {"bot": 0, **{name: code for name, code in enemy_name.items() if code}}
 ABILITIES = {"smart": 1, "attack": 3674, "move": 3794, "heal": 386}
+
+
+def _macro_ability_ids(available):
+    abilities = dict(ABILITIES)
+    if abilities["move"] not in available:
+        legacy_move = available.get(16)
+        if (legacy_move is None or not legacy_move.available
+                or legacy_move.link_name.casefold() != "move"
+                or legacy_move.button_name.casefold() != "move"):
+            raise RuntimeError("SC2 provides neither GeneralMove 3794 nor a verified Move ability 16")
+        abilities["move"] = 16
+    return abilities
+
+
 # Standard SC2 weapon ranges by StarCraft2BAEnv.get_unit_type_id()
 UNIT_ATTACK_RANGE = {
     1: 5.0,  # marine
@@ -57,6 +71,7 @@ class _MixedActions:
 
 class Arena(StarCraft2BAEnv):
     def __init__(self, scenario, seed, *, step_mul=8):
+        self.abilities = dict(ABILITIES)
         params = get_map_params(scenario.name)
         allowed_ids = params.get("blue_control_models", [0])
         for opponent in scenario.opponents:
@@ -103,6 +118,7 @@ class Arena(StarCraft2BAEnv):
 
     def _launch(self):
         super()._launch()
+        self.abilities = _macro_ability_ids(self._controller.data().abilities)
         self.launches += 1
         if max(self.map_x, self.map_y) > 128:
             raise ValueError("The legacy 128x128 influence grid requires a SC2BA map at most 128 world units wide.")
@@ -187,7 +203,7 @@ class Arena(StarCraft2BAEnv):
 
     def _raw_action(self, command):
         raw_command = raw.ActionRawUnitCommand(
-            ability_id=ABILITIES[command.ability], unit_tags=command.units, queue_command=command.queued,
+            ability_id=self.abilities[command.ability], unit_tags=command.units, queue_command=command.queued,
         )
         if isinstance(command.target, int):
             raw_command.target_unit_tag = command.target
@@ -206,7 +222,7 @@ class Arena(StarCraft2BAEnv):
         active_heals = {
             (unit.tag, unit.orders[0].target_unit_tag)
             for unit in self.agents.values()
-            if unit.health > 0 and unit.orders and unit.orders[0].ability_id == ABILITIES["heal"]
+            if unit.health > 0 and unit.orders and unit.orders[0].ability_id == self.abilities["heal"]
         }
         return [
             self._raw_action(command) for command in commands

@@ -9,6 +9,7 @@ only the Python standard library and never import the training environment.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -89,7 +90,6 @@ def arm_map(manifest):
     require(manifest.get("format") == "bch-sc2ba-v11-manifest-v2", "A v2 manifest is required")
     result = {}
     for group in manifest["groups"]:
-        require(group["scenario"] in manifest["scenario_hosts"], "Scenario ownership is missing")
         for method in group["methods"]:
             key = f"{group['scenario']}/{group['regime']}/{method}/seed_{group['seed']}"
             require(re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+/seed_[0-9]+", key),
@@ -110,11 +110,11 @@ def load_manifest(root, expected=None):
 def verify_bundle(folder, key, manifest, entries):
     require(key in entries, "Arm is absent from the shared manifest")
     group, method = entries[key]
-    owner = manifest["scenario_hosts"][group["scenario"]]
     marker = read_json(folder / "done.json")
+    owner = marker.get("host_id")
     require(marker.get("status") == "done" and marker.get("manifest_sha256") == manifest_digest(manifest),
             f"Invalid completion marker for {key}")
-    require(marker.get("host_id") == owner, f"Wrong completion host for {key}")
+    require(isinstance(owner, str) and bool(owner), f"Missing completion host for {key}")
     hashes = marker.get("files_sha256", {})
     require(set(hashes) == set(RESULT_FILES), f"Incomplete fingerprint list for {key}")
     for name in RESULT_FILES:
@@ -131,72 +131,129 @@ def verify_bundle(folder, key, manifest, entries):
     return report
 
 
+def group_keys(key, entries):
+    group, _ = entries[key]
+    return [f"{group['scenario']}/{group['regime']}/{method}/seed_{group['seed']}"
+            for method in group['methods']]
+
+
+@contextmanager
+def group_lock(root, index):
+    folder = root / "locks"
+    folder.mkdir(parents=True, exist_ok=True)
+    with (folder / f"group-{index}.lock").open("a+b") as lock:
+        if os.name == "nt":
+            import msvcrt
+            lock.seek(0, os.SEEK_END)
+            if lock.tell() == 0:
+                lock.write(b"0")
+                lock.flush()
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def group_priority(root, key, manifest, entries):
+    markers = []
+    for member in group_keys(key, entries):
+        folder = root / "arms" / member
+        verify_bundle(folder, member, manifest, entries)
+        markers.append(read_json(folder / "done.json"))
+    require(len({marker['host_id'] for marker in markers}) == 1, "A paired group must come from one host")
+    return (max(marker['completed_at'] for marker in markers), markers[0]['host_id'])
+
+
 def export_bundle(root, key, manifest, entries, stream):
-    folder = root / "arms" / key
-    verify_bundle(folder, key, manifest, entries)
+    group_priority(root, key, manifest, entries)
     with tarfile.open(fileobj=stream, mode="w|gz") as archive:
-        for name in TRANSFER_FILES:
-            archive.add(str(folder / name), arcname=name, recursive=False)
+        for member in group_keys(key, entries):
+            method = entries[member][1]
+            for name in TRANSFER_FILES:
+                archive.add(str(root / "arms" / member / name), arcname=f"{method}/{name}", recursive=False)
 
 
-def unpack_bundle(stream, stage_root, key):
-    folder = stage_root / "arms" / key
-    folder.mkdir(parents=True)
-    names = set()
+def unpack_bundle(stream, stage_root, key, entries):
+    keys = group_keys(key, entries)
+    permitted = {f"{entries[member][1]}/{name}": (member, name)
+                 for member in keys for name in TRANSFER_FILES}
+    seen = set()
     with tarfile.open(fileobj=stream, mode="r|gz") as archive:
         for member in archive:
-            require(member.isfile() and member.name in TRANSFER_FILES and member.name not in names,
-                    "Unexpected or repeated file in result transfer")
-            names.add(member.name)
-            with archive.extractfile(member) as source, (folder / member.name).open("wb") as destination:
-                shutil.copyfileobj(source, destination)
-    require(names == set(TRANSFER_FILES), "Result transfer is incomplete")
-    return folder
+            require(member.isfile() and member.name in permitted and member.name not in seen,
+                    "Unsafe or duplicate result archive member")
+            seen.add(member.name)
+            arm, name = permitted[member.name]
+            destination = stage_root / "arms" / arm / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with archive.extractfile(member) as source, destination.open("wb") as output:
+                shutil.copyfileobj(source, output)
+    require(seen == set(permitted), "Paired group transfer is incomplete")
 
 
 def publish_bundle(stage_root, root, key, manifest, entries, semantic_verifier=None):
-    staged = stage_root / "arms" / key
-    report = verify_bundle(staged, key, manifest, entries)
-    group, method = entries[key]
+    keys = group_keys(key, entries)
+    incoming = group_priority(stage_root, key, manifest, entries)
     if semantic_verifier:
-        require(semantic_verifier(stage_root, manifest).valid(group, method), f"Full result validation failed for {key}")
-    target = root / "arms" / key
-    marker_bytes = (staged / "done.json").read_bytes()
-    if (target / "done.json").exists():
-        verify_bundle(target, key, manifest, entries)
-        require((target / "done.json").read_bytes() == marker_bytes, f"Conflicting completed arm {key}")
-        return report
-    if (target / "status.json").exists():
-        require(read_json(target / "status.json").get("host_id") == report["host_id"],
-                f"Refusing to replace another host's partial arm {key}")
-    target.mkdir(parents=True, exist_ok=True)
-    for name in RESULT_FILES:
-        os.replace(staged / name, target / name)
-    atomic_bytes(target / "done.json", marker_bytes)
-    return report
+        verifier = semantic_verifier(stage_root, manifest)
+        require(verifier.group_complete(entries[key][0]), "Full paired result validation failed")
+    try:
+        with group_lock(root, entries[key][0]['index']):
+            try:
+                current = group_priority(root, key, manifest, entries)
+            except (OSError, ValueError, KeyError, RuntimeError):
+                current = None
+            if current is not None and current <= incoming:
+                return False
+            backup = root / ".superseded" / f"group-{entries[key][0]['index']}-{time.time_ns()}"
+            for member in keys:
+                target = root / "arms" / member
+                if target.exists():
+                    backup.mkdir(parents=True, exist_ok=True)
+                    os.replace(target, backup / entries[member][1])
+                target.mkdir(parents=True, exist_ok=True)
+                staged = stage_root / "arms" / member
+                for name in RESULT_FILES:
+                    os.replace(staged / name, target / name)
+            for member in keys:
+                atomic_bytes(root / "arms" / member / "done.json",
+                             (stage_root / "arms" / member / "done.json").read_bytes())
+            return True
+    except (BlockingIOError, PermissionError):
+        return False
 
 
 def remote_snapshot(root, manifest, entries, host_id):
-    done = {}
-    statuses = []
-    for key, (group, _) in entries.items():
+    done, priorities, statuses = {}, {}, []
+    for key, (group, method) in entries.items():
         folder = root / "arms" / key
-        marker = folder / "done.json"
-        if marker.exists():
-            record = read_json(marker)
-            require(record.get("manifest_sha256") == manifest_digest(manifest) and
-                    record.get("host_id") == manifest["scenario_hosts"][group["scenario"]],
-                    f"Invalid remote completion marker for {key}")
-            require(all((folder / name).is_file() for name in RESULT_FILES), f"Incomplete remote arm {key}")
-            done[key] = digest_file(marker)
-        if manifest["scenario_hosts"][group["scenario"]] == host_id and (folder / "status.json").is_file():
+        if method == group['methods'][0]:
+            try:
+                priority = group_priority(root, key, manifest, entries)
+                priorities[key] = priority
+                for member in group_keys(key, entries):
+                    done[member] = digest_file(root / "arms" / member / "done.json")
+            except (OSError, ValueError, KeyError, RuntimeError):
+                pass
+        if (folder / "status.json").is_file():
             status = read_json(folder / "status.json")
-            require(status.get("arm_key") == key and status.get("host_id") == host_id,
-                    f"Wrong remote heartbeat owner for {key}")
-            if status.get("state") in ("running", "blocked") and not marker.exists():
-                statuses.append(status)
+            if status.get('host_id') == host_id:
+                if status.get('state') == 'completed' and (folder / 'done.json').exists():
+                    verify_bundle(folder, key, manifest, entries)
+                    statuses.append({**status, 'verified_remote_completion': True})
+                elif status.get('state') in ('running', 'blocked') and not (folder / 'done.json').exists():
+                    statuses.append(status)
     return {"manifest_sha256": manifest_digest(manifest), "host_id": host_id,
-            "observed_at": now(), "done": done, "statuses": statuses}
+            "observed_at": now(), "done": done, "priorities": priorities, "statuses": statuses}
 
 
 def remote_main(args):
@@ -206,19 +263,16 @@ def remote_main(args):
     if args.remote_action == "snapshot":
         print(json.dumps(remote_snapshot(root, manifest, entries, args.host_id)))
     elif args.remote_action == "export":
-        group, _ = entries[args.arm_key]
-        require(manifest["scenario_hosts"][group["scenario"]] == args.host_id, "Remote export requires its original owner")
         export_bundle(root, args.arm_key, manifest, entries, sys.stdout.buffer)
     else:
-        require(args.arm_key in entries, "Unknown imported arm")
+        require(args.arm_key in entries, "Unknown imported group")
         stage_dir = root / ".sync-incoming"
         stage_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="transfer-", dir=str(stage_dir)) as temporary:
             stage_root = Path(temporary)
-            unpack_bundle(sys.stdin.buffer, stage_root, args.arm_key)
-            publish_bundle(stage_root, root, args.arm_key, manifest, entries)
-        print(json.dumps({"ok": True, "arm_key": args.arm_key,
-                          "done_sha256": digest_file(root / "arms" / args.arm_key / "done.json")}))
+            unpack_bundle(sys.stdin.buffer, stage_root, args.arm_key, entries)
+            accepted = publish_bundle(stage_root, root, args.arm_key, manifest, entries)
+        print(json.dumps({"ok": True, "accepted": accepted, "arm_key": args.arm_key}))
 
 
 def load_hosts(names, config_path=None):
@@ -332,12 +386,16 @@ class Synchronizer:
         key = status.get("arm_key")
         require(key in self.entries, "Remote heartbeat names an unknown arm")
         group, _ = self.entries[key]
-        require(status.get("host_id") == host_id == self.manifest["scenario_hosts"][group["scenario"]],
-                f"Heartbeat would overwrite another scenario owner for {key}")
+        require(status.get("host_id") == host_id, f"Wrong heartbeat host for {key}")
         require(status.get("state") in ("running", "blocked", "completed"), "Unknown remote arm state")
         path = self.root / "arms" / key / "status.json"
         if path.exists():
-            require(read_json(path).get("host_id") == host_id, f"Refusing to overwrite another host's status for {key}")
+            current = read_json(path)
+            if current.get("host_id") == "local-win" and current.get("state") == "running":
+                return
+            if (current.get('host_id') == host_id and current.get('state') == 'completed'
+                    and current.get('updated_at') == status.get('updated_at')):
+                return
         if (path.parent / "done.json").exists():
             return
         value = {**status, "batch_id": self.manifest["batch_id"]}
@@ -345,14 +403,13 @@ class Synchronizer:
             timestamp = datetime.fromisoformat(value["updated_at"].replace("Z", "+00:00"))
             if (datetime.now(timezone.utc) - timestamp).total_seconds() > self.stale_seconds:
                 value.update(state="blocked", error="Remote heartbeat expired", remote_updated_at=value["updated_at"], updated_at=now())
-        require(value["state"] != "completed", "Completion needs verified result files")
+        require(value["state"] != "completed" or value.get('verified_remote_completion') is True,
+                "Completion needs verified remote result files")
         atomic_json(path, value)
         self.post(value)
 
     def block_active(self, host_id, error):
         for key, (group, _) in self.entries.items():
-            if self.manifest["scenario_hosts"][group["scenario"]] != host_id:
-                continue
             path = self.root / "arms" / key / "status.json"
             if not path.is_file() or (path.parent / "done.json").exists():
                 continue
@@ -371,19 +428,23 @@ class Synchronizer:
             with archive.open("wb") as output:
                 remote.download(key, output)
             with archive.open("rb") as source:
-                unpack_bundle(source, stage_root, key)
-            report = publish_bundle(stage_root, self.root, key, self.manifest, self.entries, self.verifier_type)
-        status = completed_status(key, self.entries[key][0], report, self.manifest)
-        atomic_json(self.root / "arms" / key / "status.json", status)
-        self.post(status)
+                unpack_bundle(source, stage_root, key, self.entries)
+            accepted = publish_bundle(stage_root, self.root, key, self.manifest, self.entries, self.verifier_type)
+        if accepted:
+            for member in group_keys(key, self.entries):
+                report = read_json(self.root / "arms" / member / "report.json")
+                status = completed_status(member, self.entries[member][0], report, self.manifest)
+                atomic_json(self.root / "arms" / member / "status.json", status)
+                self.post(status)
+        return accepted
 
     def send(self, remote, key):
         with tempfile.TemporaryFile() as archive:
             export_bundle(self.root, key, self.manifest, self.entries, archive)
             archive.seek(0)
             response = remote.upload(key, archive)
-        require(response.get("ok") is True and response.get("done_sha256") ==
-                digest_file(self.root / "arms" / key / "done.json"), f"Remote publication did not verify {key}")
+        require(response.get("ok") is True, f"Remote publication failed for {key}")
+        return response.get("accepted", False)
 
     def cycle(self):
         self.web_error = ""
@@ -399,43 +460,41 @@ class Synchronizer:
                 snapshots[host["name"]] = snapshot
                 for status in snapshot["statuses"]:
                     self.accept_status(status, host["host_id"])
-                for key, marker_hash in snapshot["done"].items():
-                    require(key in self.entries, "Remote completion is absent from the manifest")
+                for key, remote_priority in snapshot['priorities'].items():
                     group, method = self.entries[key]
-                    if self.manifest["scenario_hosts"][group["scenario"]] != host["host_id"]:
-                        continue
-                    if self.verifier.valid(group, method):
-                        require(digest_file(self.root / "arms" / key / "done.json") == marker_hash, f"Divergent result for {key}")
-                        continue
-                    self.receive(remote, key)
-                    require(digest_file(self.root / "arms" / key / "done.json") == marker_hash, f"Remote result changed during transfer for {key}")
-                    item["downloaded"] += 1
+                    if self.verifier.group_complete(group):
+                        local_priority = group_priority(self.root, key, self.manifest, self.entries)
+                        if local_priority <= tuple(remote_priority):
+                            continue
+                    if self.receive(remote, key):
+                        item['downloaded'] += len(group['methods'])
             except (OSError, ValueError, KeyError, TypeError, RuntimeError, EOFError,
                     subprocess.SubprocessError, tarfile.TarError) as error:
                 item.update(state="blocked", error=str(error))
                 snapshots.pop(host["name"], None)
                 self.block_active(host["host_id"], f"SSH synchronization unavailable: {error}")
 
-        completed = {}
+        completed, priorities = {}, {}
         for key, (group, method) in self.entries.items():
-            if self.verifier.valid(group, method):
-                completed[key] = digest_file(self.root / "arms" / key / "done.json")
+            if method == group['methods'][0] and self.verifier.group_complete(group):
+                priorities[key] = group_priority(self.root, key, self.manifest, self.entries)
+                for member in group_keys(key, self.entries):
+                    completed[member] = digest_file(self.root / 'arms' / member / 'done.json')
         for remote in self.remotes:
-            name = remote.host["name"]
+            name = remote.host['name']
             if name not in snapshots:
                 continue
             try:
-                inventory = snapshots[name]["done"]
-                for key, marker_hash in completed.items():
-                    if key in inventory:
-                        require(inventory[key] == marker_hash, f"Remote has conflicting completed arm {key}")
+                inventory = snapshots[name]['priorities']
+                for key, priority in priorities.items():
+                    if key in inventory and tuple(inventory[key]) <= priority:
                         continue
-                    self.send(remote, key)
-                    summary[name]["uploaded"] += 1
+                    if self.send(remote, key):
+                        summary[name]['uploaded'] += len(self.entries[key][0]['methods'])
             except (OSError, ValueError, KeyError, TypeError, RuntimeError, EOFError,
                     subprocess.SubprocessError, tarfile.TarError) as error:
-                summary[name].update(state="blocked", error=str(error))
-                self.block_active(remote.host["host_id"], f"SSH synchronization unavailable: {error}")
+                summary[name].update(state='blocked', error=str(error))
+                self.block_active(remote.host['host_id'], f"SSH synchronization unavailable: {error}")
 
         if any(item["downloaded"] for item in summary.values()):
             from .v10_suite import aggregate_results

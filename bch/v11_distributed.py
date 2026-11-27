@@ -10,6 +10,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import psutil
 import re
 import signal
 import subprocess
@@ -49,7 +50,7 @@ def manifest_digest(manifest):
 
 
 def build_v11_manifest(methods=CORE_METHODS, seeds=V11_SEEDS, train_steps=40000,
-                       eval_every=8000, include_b1=True, scenario_hosts=None,
+                       eval_every=8000, include_b1=True,
                        val_repeats=2, test_repeats=5):
     require(tuple(methods) == CORE_METHODS, "v11 requires all four paired encoders")
     require(len(seeds) == len(set(seeds)) and len(seeds) > 0, "Seeds must be distinct")
@@ -70,16 +71,9 @@ def build_v11_manifest(methods=CORE_METHODS, seeds=V11_SEEDS, train_steps=40000,
         "format": "bch-sc2ba-v11-manifest-v2", "batch_id": "v11_40k_10seed", "created_at": iso_now(),
         "train_steps": train_steps, "eval_every": eval_every, "seeds": list(seeds), "methods": list(methods),
         "val_repeats": val_repeats, "test_repeats": test_repeats,
-        "scenario_hosts": scenario_hosts or {}, "total_groups": len(groups),
+        "total_groups": len(groups),
         "total_arms": len(groups) * len(methods), "groups": groups,
     }
-
-
-def validate_assignments(manifest):
-    owners = manifest.get("scenario_hosts", {})
-    require(set(owners) == set(SCENARIO_GROUPS["all13"]), "Assign every scenario to exactly one host in --scenario-hosts JSON")
-    require(all(isinstance(host, str) and re.fullmatch(r"[A-Za-z0-9_.-]+", host) for host in owners.values()),
-            "Host IDs may contain letters, numbers, underscores, dots and hyphens")
 
 
 def arm_key(group, method):
@@ -104,13 +98,16 @@ def post_wnc_report(wnc_url, payload):
         pass
 
 
-def release_gpu_hold_if_present(script, gpu_index):
+def release_gpu_hold_if_present(script, gpu_index, state_dir=None):
     require(script and Path(script).is_file(), "GPU dispatch requires a readable --gpu-hold-script")
-    release = subprocess.run([sys.executable, str(script), "release", "--gpu", str(gpu_index)],
+    command = [sys.executable, str(script)]
+    if state_dir:
+        command.extend(["--state-dir", str(state_dir)])
+    release = subprocess.run([*command, "release", "--gpu", str(gpu_index)],
                              capture_output=True, text=True, timeout=30)
     require(release.returncode == 0, f"GPU {gpu_index} hold release failed: {release.stderr[-800:]}")
     # The utility's release command can return success while a foreign process is present.
-    status = subprocess.run([sys.executable, str(script), "status"], capture_output=True, text=True, timeout=20)
+    status = subprocess.run([*command, "status"], capture_output=True, text=True, timeout=20)
     require(status.returncode == 0, f"GPU {gpu_index} status failed")
     payload = json.loads(status.stdout)
     devices = payload.get("gpus", [])
@@ -211,13 +208,13 @@ class CompletionVerifier:
                     return True
             marker = read_json(folder / "done.json")
             require(marker["status"] == "done" and marker["manifest_sha256"] == self.digest, "Completion protocol mismatch")
-            owner = self.manifest["scenario_hosts"][group["scenario"]]
-            require(marker["host_id"] == owner, "Completed arm belongs to another host")
+            owner = marker["host_id"]
+            require(isinstance(owner, str) and bool(owner), "Missing completion host")
             require(set(marker["files_sha256"]) == set(RESULT_FILES), "Incomplete completion fingerprint list")
             for name, fingerprint in marker["files_sha256"].items():
                 require(digest_file(folder / name) == fingerprint, f"Incomplete transfer of {name}")
             report = validate_worker_output(folder, group, method, self.manifest)
-            require(report["host_id"] == owner, "Report host does not match scenario owner")
+            require(report["host_id"] == owner, "Report and completion host differ")
             with self.lock:
                 self.cache[str(folder)] = signature
             return True
@@ -226,12 +223,18 @@ class CompletionVerifier:
 
     def stage_complete(self, track):
         groups = [group for group in self.manifest["groups"] if group["track"] == track]
-        return bool(groups) and all(self.valid(group, method) for group in groups for method in group["methods"])
+        return bool(groups) and all(self.group_complete(group) for group in groups)
+
+    def group_complete(self, group):
+        if not all(self.valid(group, method) for method in group["methods"]):
+            return False
+        hosts = {read_json(self.root / "arms" / arm_key(group, method) / "done.json")["host_id"]
+                 for method in group["methods"]}
+        return len(hosts) == 1
 
 
 def stage_groups(manifest, track, host_id, direction):
-    groups = [group for group in manifest["groups"] if group["track"] == track
-              and manifest["scenario_hosts"][group["scenario"]] == host_id]
+    groups = [group for group in manifest["groups"] if group["track"] == track]
     return sorted(groups, key=lambda group: group["index"], reverse=direction == "backward")
 
 
@@ -252,7 +255,6 @@ def read_training_steps(path):
 
 
 def publish_result(work_dir, arm_dir, group, method, manifest, metadata):
-    require(metadata["host_id"] == manifest["scenario_hosts"][group["scenario"]], "Refusing result from another scenario owner")
     report = validate_worker_output(work_dir, group, method, manifest)
     report.update(metadata)
     write_json(work_dir / "report.json", report)
@@ -269,14 +271,22 @@ def publish_result(work_dir, arm_dir, group, method, manifest, metadata):
     return report
 
 
-def stop_owned_process(process):
+def stop_owned_process(process, children=()):
     """Stop only the process tree created for this arm."""
-    if process.poll() is not None:
-        return
     if os.name == "nt":
-        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=15)
+        if process.poll() is None:
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=15)
+        for child in children:
+            try:
+                if child.is_running():
+                    child.terminate()
+            except psutil.NoSuchProcess:
+                pass
     else:
-        os.killpg(process.pid, signal.SIGTERM)
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
     try:
         process.wait(timeout=15)
     except subprocess.TimeoutExpired:
@@ -289,12 +299,10 @@ def stop_owned_process(process):
 
 def cmd_init(args):
     root = Path(args.out_root)
-    require(Path(args.scenario_hosts).is_file(), "Provide --scenario-hosts JSON with all 13 scenario assignments")
     manifest = build_v11_manifest(
         methods=tuple(args.methods.split(",")), seeds=tuple(int(seed) for seed in args.seeds.split(",")),
         train_steps=args.train_steps, eval_every=args.eval_every, include_b1=not args.a1_only,
-        scenario_hosts=read_json(Path(args.scenario_hosts)), val_repeats=args.val_repeats, test_repeats=args.test_repeats)
-    validate_assignments(manifest)
+        val_repeats=args.val_repeats, test_repeats=args.test_repeats)
     document, _, _, _ = read_plan(args.plan)
     manifest["plan_sha256"] = plan_digest(document)
     encoders = Path(args.encoders_root)
@@ -305,29 +313,38 @@ def cmd_init(args):
     root.mkdir(parents=True, exist_ok=True)
     path = root / "v11_queue_manifest.json"
     if path.exists():
-        require(manifest_digest(read_json(path)) == manifest_digest(manifest), "Existing manifest differs; use its original configuration")
-        print(f"[v11 init] Verified existing {manifest['total_groups']} groups / {manifest['total_arms']} arms", flush=True)
-        return
-    require(not (root / "arms").exists(), "Existing arms require their original manifest")
+        if manifest_digest(read_json(path)) == manifest_digest(manifest):
+            print(f"[v11 init] Verified existing {manifest['total_groups']} groups / {manifest['total_arms']} arms", flush=True)
+            return
+        require(not any((root / "arms").rglob("done.json")), "Completed arms require their original manifest")
     write_json(path, manifest)
     print(f"[v11 init] Wrote {manifest['total_groups']} paired groups / {manifest['total_arms']} arms -> {path}", flush=True)
 
 
 def execute_group(group, slot, args, manifest, verifier, stop):
+    with runner_lock(Path(args.out_root), f"group-{group['index']}"):
+        if verifier.group_complete(group):
+            return
+        return execute_group_owned(group, slot, args, manifest, verifier, stop)
+
+
+def execute_group_owned(group, slot, args, manifest, verifier, stop):
     host_id = args.host_id
     root = Path(args.out_root)
     assigned_gpu = args.gpu_list[slot % len(args.gpu_list)] if args.gpu_list else None
     host_meta = {"host_id": host_id, "host_os": platform.platform(), "direction": args.direction,
                  "gpu_index": assigned_gpu, "sc2_version": args.sc2_version}
-    for method in group["methods"]:
-        destination = root / "arms" / arm_key(group, method)
-        if (destination / "done.json").exists():
-            require(verifier.valid(group, method), f"Invalid or partially transferred done marker at {destination}")
-        for name in ("status.json", "report.json"):
-            if (destination / name).exists():
-                previous = read_json(destination / name)
-                require(previous.get("host_id", host_id) == host_id,
-                        f"Refusing cross-host partial group takeover at {destination}")
+    foreign_partial = any(
+        (root / "arms" / arm_key(group, method) / "report.json").exists()
+        and read_json(root / "arms" / arm_key(group, method) / "report.json").get("host_id") != host_id
+        for method in group["methods"])
+    if foreign_partial:
+        backup = root / ".superseded" / f"group-{group['index']}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}"
+        for method in group["methods"]:
+            folder = root / "arms" / arm_key(group, method)
+            if folder.exists():
+                backup.mkdir(parents=True, exist_ok=True)
+                folder.replace(backup / method)
     for method in group["methods"]:
         if stop.is_set():
             return
@@ -369,12 +386,17 @@ def execute_group(group, slot, args, manifest, verifier, stop):
             environment["CUDA_VISIBLE_DEVICES"] = str(assigned_gpu)
         started = perf_counter()
         process = None
+        children = []
         try:
             with log_path.open("w", encoding="utf-8") as log:
                 process = subprocess.Popen(command, env=environment, stdout=log, stderr=subprocess.STDOUT,
                                            start_new_session=os.name != "nt",
                                            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0)
                 while True:
+                    try:
+                        children = psutil.Process(process.pid).children(recursive=True)
+                    except psutil.NoSuchProcess:
+                        pass
                     elapsed = perf_counter() - started
                     steps = read_training_steps(work / "train_episodes.jsonl")
                     report_status("running", pid=process.pid, steps=steps, wall_seconds=round(elapsed, 2),
@@ -391,26 +413,23 @@ def execute_group(group, slot, args, manifest, verifier, stop):
                           all9_win_rate=round(report["test"]["all9_win_rate"] * 100, 2), error="")
             print(f"[arm] {host_id} {key} completed in {report['wall_seconds']:.1f}s", flush=True)
         except Exception as error:
-            stop.set()
             if process is not None:
-                stop_owned_process(process)
+                stop_owned_process(process, children)
             report_status("blocked", error=str(error), wall_seconds=round(perf_counter() - started, 2))
-            raise
+            print(f"[blocked] {host_id} {key}: {error}", flush=True)
 
 
 def cmd_run(args):
     root = Path(args.out_root)
     manifest = read_json(root / "v11_queue_manifest.json")
-    validate_assignments(manifest)
-    require(args.host_id in manifest["scenario_hosts"].values(), "This host owns no scenario")
+    require(re.fullmatch(r"[A-Za-z0-9_.-]+", args.host_id), "Invalid host ID")
     require(args.workers > 0 and args.heartbeat_seconds > 0 and args.poll_seconds > 0, "Workers and intervals must be positive")
     document, _, _, _ = read_plan(args.plan)
     require(plan_digest(document) == manifest["plan_sha256"], "Run plan differs from initialized manifest")
-    for scenario, host in manifest["scenario_hosts"].items():
-        if host == args.host_id:
-            for method in CORE_METHODS[1:]:
-                path = Path(args.encoders_root) / scenario / method / "encoder.pt"
-                require(digest_file(path) == manifest["encoder_sha256"][f"{scenario}/{method}"], f"Wrong encoder {path}")
+    for scenario in SCENARIO_GROUPS["all13"]:
+        for method in CORE_METHODS[1:]:
+            path = Path(args.encoders_root) / scenario / method / "encoder.pt"
+            require(digest_file(path) == manifest["encoder_sha256"][f"{scenario}/{method}"], f"Wrong encoder {path}")
     args.gpu_list = [int(gpu) for gpu in args.gpus.split(",") if gpu.strip()]
     require(len(args.gpu_list) == len(set(args.gpu_list)), "Duplicate GPU index")
     verifier = CompletionVerifier(root, manifest)
@@ -424,48 +443,43 @@ def cmd_run(args):
 
     with runner_lock(root, args.host_id):
         for gpu in args.gpu_list:
-            release_gpu_hold_if_present(args.gpu_hold_script, gpu)
+            release_gpu_hold_if_present(args.gpu_hold_script, gpu, args.gpu_hold_state_dir)
         print(f"[v11 run] host={args.host_id} direction={args.direction} workers={args.workers} gpus={args.gpu_list or 'cpu'}", flush=True)
-        tracks = ("v11-A1", "v11-B1") if args.track == "all" else (args.track,)
+        tracks = ("v11-A1", "v11-B1") if args.track in ("all", "v11-B1") else ("v11-A1",)
         stop = Event()
         try:
             for track in tracks:
-                if track == "v11-B1":
-                    while not verifier.stage_complete("v11-A1"):
-                        runner_status("waiting", track, reason="Waiting for all validated A1 results from every host")
-                        stop.wait(args.poll_seconds)
                 groups = stage_groups(manifest, track, args.host_id, args.direction)
-                runner_status("running", track)
-                failures = []
-                interrupted = False
-                with ThreadPoolExecutor(max_workers=args.workers) as pool:
-                    pending = {pool.submit(execute_group, group, slot, args, manifest, verifier, stop): group
-                               for slot, group in enumerate(groups)}
-                    try:
-                        for future in as_completed(pending):
-                            try:
-                                future.result()
-                            except CancelledError:
-                                continue
-                            except Exception as error:
-                                stop.set()
-                                failures.append(str(error))
-                                for waiting in pending:
-                                    waiting.cancel()
-                    except KeyboardInterrupt:
-                        stop.set()
-                        interrupted = True
-                        for waiting in pending:
-                            waiting.cancel()
-                        print("[v11 stop] Finishing active arms; queued groups cancelled", flush=True)
-                if interrupted:
-                    raise KeyboardInterrupt
-                require(not failures, "\n".join(failures))
-                require(all(verifier.valid(group, method) for group in groups for method in group["methods"]),
-                        f"Some assigned {track} arms are unfinished")
+                while not verifier.stage_complete(track):
+                    runner_status("running", track)
+                    remaining = [group for group in groups if not verifier.group_complete(group)]
+                    interrupted = False
+                    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+                        pending = {pool.submit(execute_group, group, slot, args, manifest, verifier, stop): group
+                                   for slot, group in enumerate(remaining)}
+                        try:
+                            for future in as_completed(pending):
+                                try:
+                                    future.result()
+                                except CancelledError:
+                                    continue
+                                except Exception as error:
+                                    print(f"[group retry] {pending[future]['group_id']}: {error}", flush=True)
+                        except KeyboardInterrupt:
+                            stop.set()
+                            interrupted = True
+                            for waiting in pending:
+                                waiting.cancel()
+                            print("[v11 stop] Finishing active arms; queued groups cancelled", flush=True)
+                    if interrupted:
+                        raise KeyboardInterrupt
+                    aggregate_results(root)
+                    if not verifier.stage_complete(track):
+                        runner_status("running", track, reason="Retrying remaining groups locally")
+                        stop.wait(args.poll_seconds)
                 aggregate_results(root)
-                runner_status("completed", track, scope="assigned scenarios")
-                print(f"[stage] {args.host_id} {track} assigned groups complete", flush=True)
+                runner_status("completed", track, scope="all groups")
+                print(f"[stage] {args.host_id} {track} all groups complete", flush=True)
         except KeyboardInterrupt:
             stop.set()
             runner_status("blocked", track, error="Interrupted; active arms drained and queued groups cancelled")
@@ -478,11 +492,10 @@ def cmd_run(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="cmd", required=True)
-    initialize = commands.add_parser("init", help="Create an immutable, scenario-owned paired manifest")
+    initialize = commands.add_parser("init", help="Create the shared ordered paired-group manifest")
     initialize.add_argument("--out-root", type=Path, default=DEFAULT_ROOT)
     initialize.add_argument("--plan", type=Path, default=DEFAULT_PLAN)
     initialize.add_argument("--encoders-root", type=Path, default=DEFAULT_ENCODERS)
-    initialize.add_argument("--scenario-hosts", required=True, help="JSON mapping all 13 scenario names to host IDs")
     initialize.add_argument("--methods", default=",".join(CORE_METHODS))
     initialize.add_argument("--seeds", default=",".join(map(str, V11_SEEDS)))
     initialize.add_argument("--train-steps", type=int, default=V11_DEFAULT_STEPS)
@@ -491,7 +504,7 @@ def main():
     initialize.add_argument("--test-repeats", type=int, default=5)
     initialize.add_argument("--a1-only", action="store_true")
     initialize.set_defaults(func=cmd_init)
-    run = commands.add_parser("run", help="Run owned scenarios, with A1 globally complete before B1")
+    run = commands.add_parser("run", help="Traverse all groups, completing A1 before B1")
     run.add_argument("--plan", type=Path, default=DEFAULT_PLAN)
     run.add_argument("--out-root", type=Path, default=DEFAULT_ROOT)
     run.add_argument("--encoders-root", type=Path, default=DEFAULT_ENCODERS)
@@ -500,6 +513,7 @@ def main():
     run.add_argument("--workers", type=int, default=6)
     run.add_argument("--gpus", default="")
     run.add_argument("--gpu-hold-script", default="")
+    run.add_argument("--gpu-hold-state-dir", default="")
     run.add_argument("--host-id", required=True)
     run.add_argument("--sc2-version", required=True, help="SC2 version confirmed by the preflight engine check")
     run.add_argument("--wnc-url", default="http://127.0.0.1:4321/studio/experiment-console.json")
