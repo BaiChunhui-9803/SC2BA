@@ -3,12 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SC2BA 探针状态覆盖</title>
+<title>SC2BA 多表示空间 t-SNE、存活阵容包络与聚类有效性工作台</title>
 <style>
 :root {
     color-scheme: light;
     --page: #f5f7fa;
-    --paper: #fff;
+    --paper: #ffffff;
+    --surface-sub: #eef3f8;
     --text: #172332;
     --muted: #526173;
     --line: #dbe2eb;
@@ -18,106 +19,305 @@
     --shared: #6645a8;
     --ally: #255dab;
     --enemy: #bf3f58;
+    --win: #158059;
+    --loss: #be374e;
+    --draw: #708295;
+    --best-bg: rgba(21, 128, 89, 0.12);
+    --best-ink: #0f6444;
+    --warn-bg: rgba(190, 55, 78, 0.11);
+    --warn-ink: #a3273d;
+    --accent: #0f7699;
+    --accent-soft: rgba(15, 118, 153, 0.14);
+    --focus-glow: rgba(15, 118, 153, 0.24);
     font-family: Inter, "Microsoft YaHei UI", system-ui, sans-serif;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-body { margin: 0; background: var(--page); color: var(--text); line-height: 1.55; }
-main { width: min(1320px, 100%); margin: auto; padding: 28px clamp(14px, 3vw, 38px) 36px; }
-h1 { margin: 0; font-size: clamp(25px, 3.1vw, 35px); letter-spacing: -.035em; }
-h2 { margin: 0; font-size: 19px; }
+body { margin: 0; background: var(--page); color: var(--text); line-height: 1.5; }
+main { width: min(1440px, 100%); margin: auto; padding: 18px clamp(12px, 2.2vw, 28px) 34px; }
+h1 { margin: 0; font-size: clamp(20px, 2.4vw, 27px); letter-spacing: -.025em; }
+h2 { margin: 0; font-size: 16.5px; }
+h3 { margin: 0; font-size: 14px; }
 p { margin: 0; }
-.header { display: flex; align-items: end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.header { display: flex; align-items: end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .muted, .note { color: var(--muted); }
-.note { font-size: 13px; }
-.controls { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
-.controls label, .frame-choice { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+.note { font-size: 12.2px; }
+.controls { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
+.controls label, .frame-choice { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
 button, select, .jump { font: inherit; color: var(--text); background: var(--paper); }
 button, select, .jump {
-    padding: 6px 10px; min-height: 36px; border: 1px solid #bbc6d4; border-radius: 7px;
+    padding: 4px 9px; min-height: 31px; border: 1px solid #bbc6d4; border-radius: 7px; font-size: 12.4px;
 }
 button { cursor: pointer; }
-.jump { align-self: end; display: inline-flex; align-items: center; text-decoration: none; font-size: 13px; }
-button:disabled { cursor: default; opacity: .56; }
-:focus-visible { outline: 2px solid #336dbe; outline-offset: 3px; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+.jump { align-self: end; display: inline-flex; align-items: center; text-decoration: none; }
+button:disabled { cursor: default; opacity: .52; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.copy-link-btn { font-size: 12px; min-height: 28px; padding: 2px 9px; }
+
 .numbers {
     display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px;
-    margin: 18px 0 12px;
+    margin: 12px 0;
 }
 .number, .pane { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; }
-.number { padding: 9px 14px; }
-.number strong { display: block; font-size: 24px; font-variant-numeric: tabular-nums; }
-.number span { display: block; font-size: 13px; color: var(--muted); }
+.number { padding: 8px 13px; }
+.number strong { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+.number span { display: block; font-size: 12px; color: var(--muted); }
 .number.fixed strong, .key.fixed { color: var(--fixed); }
 .number.mixed strong, .key.mixed { color: var(--mixed); }
 .number.shared strong, .key.shared { color: var(--shared); }
-.views { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(290px, 1fr); gap: 12px; align-items: start; }
-.pane { padding: 15px; min-width: 0; }
+
+.pane { padding: 13px 14px; min-width: 0; scroll-margin-top: 10px; }
+.pane + .pane, .section-gap { margin-top: 12px; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
-svg { display: block; width: 100%; height: auto; overflow: visible; color: var(--text); }
-.axis-text { fill: var(--muted); font-size: 14px; }
-.field .axis-text { font-size: 12px; }
+.panel-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.panel-tools label { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+
+/* Module Fullscreen (native :fullscreen + fixed overlay fallback) */
+#roster-strip {
+    transition: background-color .2s ease, padding .2s ease, border-radius .2s ease;
+}
+#roster-strip:fullscreen,
+#roster-strip.module-fullscreen {
+    background: var(--page);
+    border: none;
+    border-radius: 0;
+    padding: 18px 24px 28px;
+    overflow-y: auto;
+    width: 100vw;
+    height: 100vh;
+}
+#roster-strip.module-fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    margin: 0;
+}
+#roster-strip:fullscreen .brushed-gallery-grid,
+#roster-strip.module-fullscreen .brushed-gallery-grid {
+    max-height: none;
+}
+
+.strip-toolbar {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px;
+    margin-top: 8px; padding: 8px 10px; border-radius: 9px;
+    background: var(--surface-sub); border: 1px solid var(--line);
+}
+.space-toggles { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.space-chip {
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px;
+    border-radius: 999px; border: 1px solid var(--line); background: var(--paper);
+    font-size: 12px; cursor: pointer; user-select: none; color: var(--text);
+}
+.space-chip input { margin: 0; accent-color: var(--accent); }
+.space-chip.active { border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+
+.shared-legend-bar {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px;
+    margin: 9px 0 8px; padding-bottom: 7px; border-bottom: 1px dashed var(--line);
+}
+.roster-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.roster-chip {
+    display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px;
+    border-radius: 999px; border: 1px solid var(--line); background: var(--paper);
+    font-size: 12px; cursor: pointer; user-select: none; min-height: 26px;
+}
+.roster-chip.off { opacity: .42; }
+.roster-key { display: inline-block; width: 14px; height: 9px; border: 1.5px solid; border-radius: 2.5px; }
+
+.legend { display: flex; gap: 6px 13px; flex-wrap: wrap; color: var(--muted); font-size: 12px; align-items: center; }
+.legend span { display: inline-flex; gap: 4px; align-items: center; }
+.key { width: 15px; height: 15px; line-height: 15px; text-align: center; display: inline-block; font-size: 14px; }
+.swatch { display: inline-block; width: 11px; height: 11px; border-radius: 50%; border: 1px solid rgba(0,0,0,.15); }
+.grad-bar { display: inline-block; width: 76px; height: 9px; border-radius: 4px; border: 1px solid var(--line); }
+
+/* Unified 1-Left-Large Reference + Right 2x2 Grid */
+.strip-layout-grid {
+    display: grid;
+    grid-template-columns: minmax(250px, 1.0fr) minmax(0, 1.38fr);
+    gap: 10px;
+    align-items: stretch;
+}
+.strip-layout-grid.no-ref {
+    grid-template-columns: 1fr;
+}
+.strip-layout-grid.only-ref {
+    grid-template-columns: minmax(0, 760px);
+    justify-content: center;
+}
+.strip-ref-slot { display: flex; flex-direction: column; min-width: 0; }
+.strip-ref-slot .strip-card { flex: 1; display: flex; flex-direction: column; }
+.strip-ref-slot .strip-card svg { flex: 1; min-height: 0; }
+.strip-quad-slot {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    min-width: 0;
+}
+.strip-quad-slot.count-1 { grid-template-columns: 1fr; }
+.strip-quad-slot.count-2 { grid-template-columns: 1fr; }
+.strip-card {
+    background: var(--paper); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 11px 8px; display: flex; flex-direction: column; min-width: 0;
+}
+.strip-card.ref-card {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+.ref-badge {
+    display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px;
+    border-radius: 999px; background: var(--accent-soft); color: var(--accent);
+}
+.strip-card-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    flex-wrap: wrap; margin-bottom: 2px;
+}
+.strip-card-head h3 { font-size: 13.8px; letter-spacing: -.01em; }
+.strip-card-sub { font-size: 11.6px; color: var(--muted); margin-bottom: 5px; min-height: 17px; }
+.strip-card select { min-height: 24px; padding: 1px 6px; font-size: 11.5px; }
+
+/* Brush selection bar + Brushed All-Observations Gallery */
+.brush-bar {
+    margin-top: 10px; padding: 8px 12px; border-radius: 9px;
+    background: var(--accent-soft); border: 1px solid var(--accent);
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 14px;
+    font-size: 12.5px;
+}
+.brush-stats { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; font-variant-numeric: tabular-nums; }
+.brush-stats strong { color: var(--accent); }
+.brush-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.brush-actions button, .brush-actions select { min-height: 27px; padding: 2px 8px; font-size: 12px; }
+
+.brushed-gallery-wrap {
+    margin-top: 10px; padding: 11px 12px; border-radius: 10px;
+    background: var(--surface-sub); border: 1px solid var(--line);
+}
+.brushed-gallery-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(222px, 1fr));
+    gap: 9px;
+    margin-top: 9px;
+    max-height: 460px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+.obs-card {
+    background: var(--paper); border: 1px solid var(--line); border-radius: 9px;
+    padding: 7px 8px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;
+    transition: border-color .14s ease, box-shadow .14s ease;
+}
+.obs-card:hover { border-color: var(--accent); }
+.obs-card.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.obs-card-head { display: flex; align-items: center; justify-content: space-between; gap: 5px; font-size: 11.6px; font-weight: 600; }
+.obs-card-sub { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.outcome-pill {
+    font-size: 10.5px; padding: 0 6px; border-radius: 999px; font-weight: 600;
+}
+.outcome-pill.win { background: var(--best-bg); color: var(--best-ink); }
+.outcome-pill.loss { background: var(--warn-bg); color: var(--warn-ink); }
+.outcome-pill.draw { background: var(--surface-sub); color: var(--muted); }
+.obs-card-metrics {
+    display: flex; flex-wrap: wrap; gap: 3px 8px; font-size: 11px; color: var(--muted);
+    font-variant-numeric: tabular-nums; border-top: 1px solid var(--line); padding-top: 4px;
+}
+
+svg { display: block; width: 100%; height: auto; overflow: visible; color: var(--text); user-select: none; }
+svg.tsne-svg { cursor: crosshair; touch-action: none; }
+.axis-text { fill: var(--muted); font-size: 11.5px; }
+.field .axis-text { font-size: 11.5px; }
 .grid { stroke: var(--grid); stroke-width: 1; }
 .plot-border { fill: none; stroke: #cdd6e1; stroke-width: 1; }
-.legend { display: flex; gap: 6px 15px; flex-wrap: wrap; color: var(--muted); font-size: 13px; }
-.legend span { display: inline-flex; gap: 6px; align-items: center; }
-.key { width: 20px; height: 17px; line-height: 17px; text-align: center; display: inline-block; font-size: 17px; }
-#map-scatter { margin: 3px 0; }
-.mark { cursor: pointer; }
-.mark .disc { fill: currentColor; stroke: var(--paper); stroke-width: 1px; opacity: .89; }
-.mark.shared .disc { fill: none; stroke: currentColor; stroke-width: 2.15px; }
-.mark .focus-ring { fill: none; stroke: currentColor; opacity: 0; stroke-width: 1.3px; }
-.mark:hover .focus-ring, .mark:focus-visible .focus-ring, .mark.active .focus-ring { opacity: 1; }
-.mark.active .focus-ring { stroke: var(--text); stroke-width: 1.8px; }
+.hull-shape { fill-opacity: .11; stroke-opacity: .78; stroke-width: 1.5; pointer-events: none; transition: opacity .14s ease; }
+.has-brush .hull-shape { opacity: .32; }
+
+.brush-rect {
+    fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.4;
+    stroke-dasharray: 4 3; pointer-events: none;
+}
+
+.mark { cursor: pointer; transition: opacity .12s ease; }
+.mark .disc { fill: currentColor; stroke: var(--paper); stroke-width: 1px; opacity: .92; }
+.mark.shared .disc { fill: none; stroke: currentColor; stroke-width: 2.1px; }
+.mark .focus-halo { fill: var(--accent); opacity: 0; pointer-events: none; }
+.mark .focus-ring { fill: none; stroke: var(--accent); opacity: 0; stroke-width: 1.4px; pointer-events: none; }
+.mark:hover .focus-ring, .mark:focus-visible .focus-ring { opacity: .68; }
+.mark.active .focus-halo { opacity: .24; }
+.mark.active .focus-ring { opacity: .95; stroke: var(--accent); stroke-width: 1.55px; stroke-dasharray: 3.2 2.2; }
+.mark.active .disc { stroke: var(--paper); stroke-width: 1.7px; opacity: 1; }
+.has-brush .mark.dimmed { opacity: .15; }
+.has-brush .mark.brushed { opacity: 1; }
+.has-brush .mark.brushed .disc { opacity: 1; stroke: var(--paper); stroke-width: 1.35px; }
+.has-brush .mark.brushed .focus-halo { opacity: .16; }
+.has-brush .mark.brushed .focus-ring { opacity: .78; stroke: var(--accent); stroke-width: 1.25px; }
+.has-brush .mark.brushed.active .focus-halo { opacity: .30; }
+.has-brush .mark.brushed.active .focus-ring { opacity: 1; stroke-width: 1.75px; stroke-dasharray: 3.2 2.2; }
+
 .mark.fixed { color: var(--fixed); }
 .mark.mixed { color: var(--mixed); }
 .mark.shared { color: var(--shared); }
-.case-tools { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; margin-top: 9px; }
-.frame-choice { margin-top: 8px; }
+
+/* Split Diagnosis Section (Reward-consistency explanation for IM-CNN vs IM-medoid) */
+.diag-grid { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(0, 1.35fr); gap: 12px; margin-top: 10px; align-items: start; }
+.diag-chart-box { background: var(--surface-sub); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.pair-cases-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.pair-case-card {
+    background: var(--surface-sub); border: 1px solid var(--line); border-radius: 9px;
+    padding: 8px 9px; display: flex; flex-direction: column; gap: 6px;
+}
+.pair-case-maps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.pair-mini { background: var(--paper); border: 1px solid var(--line); border-radius: 7px; padding: 5px 6px; }
+.pair-mini-title { font-size: 11px; font-weight: 600; display: flex; justify-content: space-between; margin-bottom: 2px; }
+
+/* Lower Inspector + Consistency grid */
+.inspector-grid {
+    display: grid; grid-template-columns: minmax(320px, 1.05fr) minmax(0, 1.35fr);
+    gap: 12px; align-items: start; margin-top: 12px;
+}
+.case-tools { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; margin-top: 8px; }
+.frame-choice { margin-top: 7px; }
 .frame-choice select { max-width: 100%; }
 .case-tools .frame-choice { margin-top: 0; }
-.case-text { min-height: 20px; font-size: 13px; margin-top: 10px; }
-.field { margin: 3px 0; }
+.case-text { min-height: 20px; font-size: 13px; margin-top: 8px; font-weight: 500; }
+.field { margin: 4px 0; }
 .ally { color: var(--ally); }
 .enemy { color: var(--enemy); }
 .frame-meta {
     display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px;
-    margin: 8px 0 0; font-size: 13px;
+    margin: 8px 0 0; font-size: 12.2px;
 }
 .frame-meta dt { color: var(--muted); }
-.frame-meta dd { margin: 0; overflow-wrap: anywhere; }
-#match { margin-top: 12px; }
-#match-note { margin: 5px 0 8px; }
-.layer-options { margin-top: 9px; display: grid; gap: 6px; }
-.layer-options details { margin-top: 0; }
-.layer-options label { display: inline-flex; gap: 5px; align-items: center; font-size: 13px; }
-.roster-options { display: flex; flex-wrap: wrap; gap: 6px 15px; padding-top: 5px; }
-.roster-key { display: inline-block; width: 16px; height: 10px; border: 1.5px solid; border-radius: 3px; }
-.hull-shape { fill-opacity: .105; stroke-opacity: .78; stroke-width: 1.5; pointer-events: none; }
-#representations { margin-top: 12px; scroll-margin-top: 10px; }
-.comparison-grid { display: grid; grid-template-columns: repeat(2,minmax(0, 1fr)); gap: 12px; margin: 10px 0; }
-.comparison-grid .pane { padding: 10px; }
-.comparison-grid h3 { font-size: 16px; margin: 0; }
-.comparison-grid label { display: inline-flex; gap: 7px; align-items: center; font-size: 13px; }
-.comparison-grid .note { margin-top: 3px; }
-.comparison-notes { display: grid; gap: 6px; }
-#roster-metrics { margin-top: 10px; }
-table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
-th, td { padding: 5px 9px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
-th:first-child { text-align: left; }
+.frame-meta dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+
+.pill-group { display: inline-flex; gap: 3px; background: var(--surface-sub); padding: 3px; border-radius: 8px; border: 1px solid var(--line); }
+.pill-group button { min-height: 27px; padding: 2px 9px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; }
+.pill-group button[aria-pressed="true"] { background: var(--paper); border-color: var(--accent); color: var(--text); font-weight: 600; }
+
+.validity-callout {
+    margin: 9px 0 11px; padding: 9px 12px; border-radius: 9px;
+    background: var(--surface-sub); border-left: 3px solid var(--accent);
+    font-size: 12.5px; display: grid; gap: 4px;
+}
+.validity-subhead { margin: 13px 0 6px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+th, td { padding: 5px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
 thead th { font-weight: 600; color: var(--muted); }
+td.cell-best { background: var(--best-bg); color: var(--best-ink); font-weight: 600; }
+td.cell-warn { background: var(--warn-bg); color: var(--warn-ink); font-weight: 600; }
+tr.row-highlight { background: var(--surface-sub); }
 .table-scroll { overflow-x: auto; }
-details { margin-top: 13px; }
-summary { cursor: pointer; font-size: 14px; }
-details p { margin-top: 7px; }
-@media (max-width: 900px) {
-    .views { grid-template-columns: 1fr; }
-    .field { max-width: 580px; margin-inline: auto; }
+details { margin-top: 10px; }
+summary { cursor: pointer; font-size: 13px; font-weight: 500; }
+details p { margin-top: 6px; }
+@media (max-width: 960px) {
+    .inspector-grid, .diag-grid { grid-template-columns: 1fr; }
+    .pair-cases-grid { grid-template-columns: 1fr; }
+    .field { max-width: 560px; margin-inline: auto; }
 }
-@media (max-width: 700px) {
-    .comparison-grid { grid-template-columns: 1fr; }
+@media (max-width: 640px) {
+    .strip-layout-grid { grid-template-columns: 1fr; }
 }
-@media (max-width: 480px) {
+@media (max-width: 580px) {
+    .strip-quad-slot { grid-template-columns: 1fr; }
     .numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .pane { padding: 11px; }
     .case-tools { grid-template-columns: 1fr; }
@@ -128,47 +328,151 @@ details p { margin-top: 7px; }
 <main>
     <header class="header">
         <div>
-            <h1>SC2BA 探针状态覆盖</h1>
+            <h1>SC2BA 多表示空间 t-SNE、存活阵容包络与聚类有效性工作台</h1>
             <p id="subtitle" class="muted"></p>
         </div>
         <div class="controls">
             <label>场景 <select id="scene"></select></label>
             <label>样本范围 <select id="scope"><option value="all">全部窗口</option><option value="later">首窗之后</option><option value="test">留出布局</option><option value="test-later">留出布局 · 首窗之后</option></select></label>
-            <label>显示类型 <select id="category"><option value="all">全部类型</option><option value="fixed">仅固定访问</option><option value="mixed">仅混合访问</option><option value="shared">两者共有</option></select></label>
-            <a class="jump" id="comparison-link" href="#representations" hidden>比较 CNN 与 BK-tree</a>
+            <label>来源筛选 <select id="category"><option value="all">全部类型</option><option value="fixed">仅固定访问</option><option value="mixed">仅混合访问</option><option value="shared">两者共有</option></select></label>
+            <label>散点着色 <select id="color-mode">
+                <option value="source">访问来源（固定 / 混合）</option>
+                <option value="outcome">终局胜负（胜 / 负）</option>
+                <option value="curr-hp">当前血量优势（我方 − 敌方）</option>
+                <option value="hp-delta">单步奖励 ΔHP</option>
+            </select></label>
+            <a class="jump" href="#split-diagnosis">奖励拆分解读 ↓</a>
+            <a class="jump" id="validity-link" href="#validity" hidden>聚类评测 ↓</a>
         </div>
     </header>
+
     <section class="numbers" aria-label="档案关系类型数">
         <div class="number fixed"><strong id="fixed-count"></strong><span>仅固定脚本访问</span></div>
         <div class="number mixed"><strong id="mixed-count"></strong><span>仅混合脚本访问</span></div>
         <div class="number shared"><strong id="shared-count"></strong><span>两者共有</span></div>
         <div class="number"><strong id="union-count"></strong><span>全部访问类型</span></div>
     </section>
-    <div class="views">
-        <section class="pane" aria-labelledby="embedding-title">
+
+    <!-- 1. Hero Left-Large Reference + Right 2x2 Multi-Space Strip (with Fullscreen & Brushed All-Observations Gallery) -->
+    <section class="pane" id="roster-strip" aria-labelledby="strip-title">
+        <div class="panel-heading">
+            <div>
+                <h2 id="strip-title">同一批观测在 5 种空间中的存活阵容包络（支持跨图框选）</h2>
+                <p id="strip-subtitle" class="note">左侧为「定性关系 + 单位间距」参考大图，右侧为四类编码/距离空间 2×2 对照；任意子图拖拽框选即可同步高亮并在下方展开全部实际观测。</p>
+            </div>
+            <div class="panel-tools">
+                <label>定性口径 <select id="relation-mode">
+                    <option value="refined">定性 + 单位间距（逐观测）</option>
+                    <option value="types">纯定性关系去重</option>
+                </select></label>
+                <label>包络口径 <select id="envelope-mode">
+                    <option value="roster">存活阵容（完整凸包）</option>
+                    <option value="roster-core">存活阵容（90%核心·去异常点）</option>
+                    <option value="reward">奖励换血态势（ΔHP分层）</option>
+                </select></label>
+                <button type="button" id="strip-fullscreen">全屏显示</button>
+                <button type="button" id="export-png" title="导出当前多空间包络图为透明底 PNG">导出透明 PNG</button>
+                <button type="button" id="download">导出 CSV</button>
+                <button type="button" class="copy-link-btn" data-copy-section="roster-strip">复制链接</button>
+            </div>
+        </div>
+
+        <div class="strip-toolbar">
+            <div class="space-toggles" id="space-toggles" aria-label="显示的表示空间"></div>
+            <div class="pill-group" id="space-presets" role="group" aria-label="空间组合预设">
+                <button type="button" data-preset="all5">左参考 + 右2×2（5空间）</button>
+                <button type="button" data-preset="classic3">经典三图（定性 / CNN / BK）</button>
+                <button type="button" data-preset="encoders4">纯四编码器（2×2）</button>
+            </div>
+        </div>
+
+        <div class="shared-legend-bar">
+            <div class="roster-chips" id="roster-chips" aria-label="点击切换包络显示"></div>
+            <div class="legend" id="color-legend" aria-label="散点图例"></div>
+        </div>
+
+        <div class="strip-layout-grid" id="strip-layout-grid">
+            <div class="strip-ref-slot" id="strip-ref-slot"></div>
+            <div class="strip-quad-slot" id="strip-quad-slot"></div>
+        </div>
+
+        <div class="brush-bar" id="brush-bar" hidden>
+            <div class="brush-stats" id="brush-stats"></div>
+            <div class="brush-actions">
+                <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;">排序
+                    <select id="brush-sort">
+                        <option value="index">默认顺序</option>
+                        <option value="dhp-desc">ΔHP 高 → 低</option>
+                        <option value="dhp-asc">ΔHP 低 → 高</option>
+                        <option value="hp-desc">血量优势 高 → 低</option>
+                        <option value="dist-asc">跨队质心距 近 → 远</option>
+                    </select>
+                </label>
+                <button type="button" id="brush-prev">上一个</button>
+                <button type="button" id="brush-next">下一个</button>
+                <button type="button" id="brush-export">导出框选 CSV</button>
+                <button type="button" id="brush-clear">清除框选 (Esc)</button>
+            </div>
+        </div>
+
+        <!-- All Brushed Actual Observations Gallery -->
+        <div class="brushed-gallery-wrap" id="brushed-gallery-wrap" hidden>
             <div class="panel-heading">
-                <h2 id="embedding-title">定性关系类型的 t-SNE</h2>
-                <button type="button" id="download">下载点数据 CSV</button>
+                <div>
+                    <h3 id="brushed-gallery-title">框选对应的全部实际观测</h3>
+                    <p class="note">点击任意一张战场缩略图，立即在全部 5 个 t-SNE 空间中高亮定位该帧并在下方查看完整参数。</p>
+                </div>
+                <div class="panel-tools">
+                    <button type="button" id="gallery-toggle">收起画廊</button>
+                </div>
             </div>
-            <div class="legend" aria-label="投影图图例">
-                <span><b class="key fixed">◆</b>仅固定访问</span>
-                <span><b class="key mixed">●</b>仅混合访问</span>
-                <span><b class="key shared">○</b>两者共有</span>
+            <div class="brushed-gallery-grid" id="brushed-gallery-grid"></div>
+        </div>
+
+        <p id="scatter-note" class="note" style="margin-top:8px;"></p>
+    </section>
+
+    <!-- 2. Split Diagnosis: Why IM-CNN splits qualitatively-close states (Reward-Consistency Perspective) -->
+    <section class="pane section-gap" id="split-diagnosis" aria-labelledby="diag-title" hidden>
+        <div class="panel-heading">
+            <div>
+                <h2 id="diag-title">为什么定性相近的状态在 IM-CNN 中会被拉远？—— 奖励冲突与经验复用诊断</h2>
+                <p class="note">检验「定性关系很近（同阵容且 d_qual &lt; 0.15）」的跨回合状态对：比较被各空间<strong>拉近（前25%）</strong>与<strong>拉远（后25%）</strong>时，真实单步奖励 ΔHP / short_reward 差异有多大。</p>
             </div>
-            <svg id="map-scatter" viewBox="0 0 760 430" role="group" aria-label="关系类型的 t-SNE 散点，支持点击每点查看观测"></svg>
-            <p id="scatter-note" class="note"></p>
-            <div class="layer-options">
-                <label><input type="checkbox" id="show-hulls" checked>显示存活阵容包络</label>
-                <div class="legend" id="hull-legend" aria-label="阵容包络图例"></div>
-                <details>
-                    <summary>选择阵容</summary>
-                    <div class="roster-options" id="roster-options"></div>
-                    <p class="note">包络使用当前可见点。两个点用线段，一个点用空心轮廓。</p>
-                </details>
+            <div class="panel-tools">
+                <label>样本对 <select id="diag-cohort">
+                    <option value="all">全部跨局定性相近对</option>
+                    <option value="same_action">严格同宏动作定性相近对</option>
+                </select></label>
+                <label>分歧指标 <select id="diag-metric">
+                    <option value="dhp">单步奖励差 |ΔHP|</option>
+                    <option value="sr">短期奖励差 |short_reward|</option>
+                    <option value="win">终局胜负分歧 |Win|</option>
+                </select></label>
+                <button type="button" class="copy-link-btn" data-copy-section="split-diagnosis">复制链接</button>
             </div>
-        </section>
-        <section class="pane" aria-labelledby="frame-title">
-            <h2 id="frame-title">对应的实际观测</h2>
+        </div>
+        <div class="validity-callout" id="diag-callout"></div>
+        <div class="diag-grid">
+            <div class="diag-chart-box">
+                <h3 id="diag-chart-title" style="margin-bottom:6px;">定性相近对：空间内「近距 vs 远距」的真实奖励分歧</h3>
+                <svg id="diag-bars-svg" viewBox="0 0 470 255"></svg>
+                <p class="note" style="margin-top:5px;">柱差越大（远距柱 ≫ 近距柱），说明该空间把定性相近点拉开越有<strong>奖励一致性依据</strong>——这些点虽定性相同，但实际换血结果悬殊，<strong>不应复用同一 Q 经验</strong>；若两柱持平或倒挂（如 IM-medoid），则多为哈希边界离散噪声。</p>
+            </div>
+            <div>
+                <h3 style="margin-bottom:7px;">典型「定性相近但 IM-CNN 拉远」跨局实战对（点击高亮至上方五空间）</h3>
+                <div class="pair-cases-grid" id="diag-cases-grid"></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 3. Battlefield Observation Inspector + Cross-Space Agreement -->
+    <div class="inspector-grid">
+        <section class="pane" id="frame-inspector" aria-labelledby="frame-title">
+            <div class="panel-heading">
+                <h2 id="frame-title">当前选中观测的战场单位坐标</h2>
+                <button type="button" class="copy-link-btn" data-copy-section="frame-inspector">复制链接</button>
+            </div>
             <div class="case-tools">
                 <label class="frame-choice">关系类型 <select id="profile"></select></label>
                 <button type="button" id="paired">查看配对观测</button>
@@ -183,71 +487,109 @@ details p { margin-top: 7px; }
             </div>
             <dl id="frame-meta" class="frame-meta"></dl>
         </section>
-    </div>
-    <section class="pane" id="representations" aria-labelledby="comparison-title" hidden>
-        <h2 id="comparison-title">同一观测在 CNN 与 BK-tree 距离中的位置</h2>
-        <p id="cnn-training" class="note"></p>
-        <div class="comparison-grid">
-            <div class="pane">
-                <h3>IM-grid CNN · 连续嵌入</h3>
-                <p id="cnn-distance-description" class="note"></p>
-                <svg class="comparison-plot" id="cnn-plot" viewBox="0 0 760 430" role="group" aria-label="CNN 同帧投影"></svg>
+
+        <section class="pane" id="representations" aria-labelledby="comparison-title" hidden>
+            <div class="panel-heading">
+                <h2 id="comparison-title">多空间原距离一致性与同阵容近邻纯度</h2>
+                <button type="button" class="copy-link-btn" data-copy-section="representations">复制链接</button>
             </div>
-            <div class="pane">
-                <div class="panel-heading">
-                    <h3>BK-tree · 预计算距离</h3>
-                    <label>距离 <select id="bk-distance"><option value="bk-position">一级位置</option><option value="bk-health">二级血量</option></select></label>
-                </div>
-                <p id="bk-description" class="note"></p>
-                <svg class="comparison-plot" id="bk-plot" viewBox="0 0 760 430" role="group" aria-label="BK-tree 距离同帧投影"></svg>
+            <p id="cnn-training" class="note" style="margin-top:4px;"></p>
+            <p id="agreement-note" class="note" style="margin:6px 0 8px;"></p>
+            <div class="table-scroll">
+                <table aria-label="IM-CNN 与其他表示空间的近邻和距离排序一致性">
+                    <thead><tr>
+                        <th scope="col">与 IM-CNN 对比</th><th scope="col">原空间 Spearman ρ</th>
+                        <th scope="col">原空间 5-NN 重合</th><th scope="col">t-SNE 5-NN 重合</th>
+                        <th scope="col">同阵容 ρ</th><th scope="col">同阵容近邻重合</th>
+                    </tr></thead>
+                    <tbody id="agreement-body"></tbody>
+                </table>
+            </div>
+            <div class="table-scroll" id="roster-metrics" style="margin-top:12px;">
+                <table aria-label="各表示空间下 5-NN 近邻相同存活阵容占比">
+                    <thead><tr id="roster-head"></tr></thead>
+                    <tbody id="roster-body"></tbody>
+                </table>
+            </div>
+            <details>
+                <summary>全部存活阵容包络开关（含低频残局）</summary>
+                <div class="roster-chips" id="roster-options" style="margin-top:7px;"></div>
+                <p class="note">支持切换到「90%核心·去异常点」查看去除极端异常帧后的真实紧凑核心，或切至「奖励换血态势」查看 ΔHP 聚团。</p>
+            </details>
+        </section>
+    </div>
+
+    <!-- 4. Quantitative Clustering Validity -->
+    <section class="pane section-gap" id="validity" aria-labelledby="validity-title" hidden>
+        <div class="panel-heading">
+            <div>
+                <h2 id="validity-title">状态聚类有效性与奖励 / 价值一致性定量评测（全方法对照）</h2>
+                <p id="validity-note" class="note"></p>
+            </div>
+            <div class="panel-tools">
+                <div class="pill-group" id="k-selector" role="group" aria-label="匹配簇数预算 K"></div>
+                <button type="button" class="copy-link-btn" data-copy-section="validity">复制链接</button>
             </div>
         </div>
-        <div class="comparison-notes">
-            <p id="comparison-frame" class="note" aria-live="polite"></p>
-            <p class="note">每点一个探针窗口。菱形是固定脚本，实心圆是混合脚本。点击任一图，两图同步高亮同一窗口。</p>
-            <p id="agreement-note" class="note"></p>
+        <div class="validity-callout" id="validity-callout"></div>
+
+        <div class="validity-subhead">
+            <h3>1. 严格跨回合 5-NN 表示一致性（仅从其他回合检索近邻，排除同局相邻帧泄漏）</h3>
+            <span class="note">绿色高亮为同列最优</span>
         </div>
         <div class="table-scroll">
-            <table aria-label="CNN 与 BK-tree 近邻和距离排序一致性">
+            <table aria-label="严格跨回合 5-NN 奖励、价值与态势一致性">
                 <thead><tr>
-                    <th scope="col">与 CNN 对比</th><th scope="col">原空间 Spearman ρ</th>
-                    <th scope="col">原空间近邻重合</th><th scope="col">投影后近邻重合</th>
-                    <th scope="col">同阵容 ρ</th><th scope="col">同阵容近邻重合</th>
+                    <th scope="col">表示空间</th>
+                    <th scope="col">终局胜负准确率</th>
+                    <th scope="col">终局胜负 R²</th>
+                    <th scope="col">终局血量差 R²</th>
+                    <th scope="col">折扣回报 G_t R²</th>
+                    <th scope="col">当前血量优势 R²</th>
+                    <th scope="col">同动作 ΔHP R²</th>
+                    <th scope="col">同动作短期奖励 R²</th>
+                    <th scope="col">跨队质心距离 R²</th>
                 </tr></thead>
-                <tbody id="agreement-body"></tbody>
+                <tbody id="knn-validity-body"></tbody>
             </table>
         </div>
-        <div class="table-scroll" id="roster-metrics">
-            <table aria-label="各距离下近邻中相同存活阵容占比">
+
+        <div class="validity-subhead">
+            <h3 id="cluster-table-title">2. 离散聚类结果质量：等簇预算 k-medoids vs Original IM hash vs 原版两级 BK-tree</h3>
+            <span class="note">LOEO = 仅用同簇内「其他回合」样本均值预测</span>
+        </div>
+        <div class="table-scroll">
+            <table aria-label="等簇预算聚类与无约束基线对比">
                 <thead><tr>
-                    <th scope="col">原空间</th><th scope="col">定性关系</th><th scope="col">CNN</th>
-                    <th scope="col">BK-tree 位置</th><th scope="col">BK-tree 血量</th><th scope="col">随机近邻</th>
+                    <th scope="col">聚类方法</th>
+                    <th scope="col">有效簇数</th>
+                    <th scope="col">跨回合复用率 Hit%</th>
+                    <th scope="col">归一化熵</th>
+                    <th scope="col">轮廓系数</th>
+                    <th scope="col">阵容 NMI</th>
+                    <th scope="col">胜负 η²</th>
+                    <th scope="col">胜负 LOEO%</th>
+                    <th scope="col">当前血量 η² / LOEO R²</th>
+                    <th scope="col">折扣回报 η² / LOEO R²</th>
+                    <th scope="col">同动作 ΔHP η²</th>
                 </tr></thead>
-                <tbody id="roster-body"></tbody>
+                <tbody id="cluster-validity-body"></tbody>
             </table>
         </div>
-        <details>
-            <summary>距离、近邻和阵容的口径</summary>
-            <p class="note">原 HRL-IM/CBS 的 BK-tree 先按双方单位的位置匹配代价用阈值 1.0 查询，再在一级簇内按这些配对单位的 HP 差用阈值 0.5 细分。两图分别用连续距离矩阵做 t-SNE。一级位置距离对每个未配对单位加 1，二级使用归一化 HP 差。跨簇的二级距离用于查看其整体结构。</p>
-            <p class="note">一致性按相同窗口的距离排序和 5 个最近邻计算。距离并列时等概率分配名额。同阵容结果只在双方存活数都相同的窗口之间比较。近邻不足 5 个的窗口无法参与同阵容 5-NN 统计。</p>
-            <p class="note">投影以每张地图的所有窗口拟合，切换时段只过滤显示。颜色筛选作用于散点。定量指标始终用选定地图与时段的全部窗口重算。</p>
-        </details>
     </section>
-    <section id="match" class="pane" aria-labelledby="match-title">
-        <h2 id="match-title">等量配对抽样</h2>
-        <p id="match-note" class="note"></p>
+
+    <section id="match" class="pane section-gap" aria-labelledby="match-title">
+        <div class="panel-heading">
+            <h2 id="match-title">等量配对抽样（固定 vs 混合脚本状态覆盖）</h2>
+            <button type="button" class="copy-link-btn" data-copy-section="match">复制链接</button>
+        </div>
+        <p id="match-note" class="note" style="margin:5px 0 8px;"></p>
         <div class="table-scroll">
             <table aria-label="同预算内访问到的去重关系类型">
                 <thead><tr><th scope="col">采样方式</th><th scope="col">平均覆盖数</th><th scope="col">第 5 至 95 百分位</th></tr></thead>
                 <tbody id="match-table"></tbody>
             </table>
         </div>
-        <details>
-            <summary>统计口径</summary>
-            <p class="note">一个类型由双方存活数和 64 格关系直方图组成。对每个跨队单位对，分别标记两个方向的射程内、最近和最远，共六个二元标记，再统计各种组合出现的次数。</p>
-            <p class="note">定性关系图沿用上一版的输入，使用双方存活比例与关系频率平方根。各场景分别投影，每点一种去重后的关系类型。时段切换沿用同一投影，颜色根据该时段的访问情况更新。</p>
-            <p class="note">按开局、对手和重复编号配对。每个组合的样本预算为两种脚本可用窗口数的较小值。各条件按同配额无放回抽样，合并条件在每组尽量各取一半。区间反映当前轨迹上的抽样波动。</p>
-        </details>
     </section>
 </main>
 <script type="application/json" id="coverage-data">__COVERAGE_DATA__</script>
@@ -260,15 +602,62 @@ const svgURI = "http://www.w3.org/2000/svg";
 const fixed = "legacy-nearest";
 const labels = { fixed: "仅固定访问", mixed: "仅混合访问", shared: "两者共有" };
 const display = { [fixed]: "固定脚本", mixed: "混合脚本" };
+const outcomeDisplay = { win: "胜", loss: "负", draw: "平", unknown: "未知" };
+
+const methodLabels = {
+    "relation": "纯定性关系",
+    "relation-refined": "定性+单位间距",
+    "im-medoid": "IM-medoid (哈希汉明)",
+    "unit-set": "Unit-set (32维)",
+    "cnn": "IM-CNN (32维)",
+    "bk-position": "BK-tree 一级位置",
+    "bk-health": "BK-tree 二级血量",
+    "bk-joint": "BK-tree 两级联合",
+};
+
+const STRIP_SPACES = [
+    { id: "relation", short: "定性参考(左大图)", isRef: true,
+      titleRefined: "定性关系 + 单位间距（参考度量）", titleTypes: "定性关系类型去重（参考度量）",
+      descRefined: "64格定性关系 + 0.25×连续单位间距与血量微差", descTypes: "64格定性关系直方图（按类型去重）" },
+    { id: "im-medoid", short: "IM-medoid", title: "IM-medoid · 哈希汉明",
+      desc: "24位势力图直方图哈希 Hamming 距离" },
+    { id: "unit-set", short: "Unit-set", title: "Unit-set · 集合编码",
+      desc: "原始单位坐标/血量集合的 32维欧氏嵌入" },
+    { id: "cnn", short: "IM-CNN", title: "IM-CNN · 势力图卷积",
+      desc: "正负势力图 CNN 标准化 32维欧氏嵌入" },
+    { id: "bk", short: "BK-tree", title: "BK-tree · 预计算距离",
+      descMap: {
+          "bk-position": "一级位置匹配代价（含未配对补位成本）",
+          "bk-health": "二级按位置最优配对后的归一化 HP 差",
+          "bk-joint": "两级联合（位置 + 0.5×血量）连续距离",
+      } },
+];
+
+const REWARD_REGIMES = [
+    { key: "pos", label: "优势换血 (ΔHP > +5)", color: "#158059" },
+    { key: "mid", label: "胶着均衡 (|ΔHP| ≤ 5)", color: "#64748b" },
+    { key: "neg", label: "劣势掉血 (ΔHP < −5)", color: "#be374e" },
+];
+
 const sceneInput = get("scene"), scopeInput = get("scope"), categoryInput = get("category");
-const profileInput = get("profile"), frameInput = get("frame");
-const scatter = get("map-scatter"), unitMap = get("unit-map");
-const cnnPlot = get("cnn-plot"), bkPlot = get("bk-plot"), bkDistance = get("bk-distance");
-const hullToggle = get("show-hulls");
+const colorModeInput = get("color-mode"), relationModeInput = get("relation-mode");
+const envelopeModeInput = get("envelope-mode");
+const profileInput = get("profile"), frameInput = get("frame"), unitMap = get("unit-map");
 const rosterSelections = new Map();
+const rewardSelections = new Set(["pos", "mid", "neg"]);
 const rosterPalette = ["#3876b4", "#af4485", "#917000", "#27874e", "#98523f", "#6858a8", "#297f89"];
+
 let scene, profiles = [], selectedFrame;
-let rosterColors;
+let selectedK = "32";
+let bkMetric = "bk-joint";
+let activeSpaces = new Set(["relation", "im-medoid", "unit-set", "cnn", "bk"]);
+let rosterColors = new Map();
+let showHulls = true;
+let galleryCollapsed = false;
+let brushedFrames = new Set();
+let brushCursor = 0;
+let suppressClickUntil = 0;
+let renderedSvgs = [];
 
 function element(name, attr = {}, content) {
     const item = document.createElementNS(svgURI, name);
@@ -276,13 +665,10 @@ function element(name, attr = {}, content) {
     if (content !== undefined) item.textContent = content;
     return item;
 }
-function option(select, value, label) {
-    const item = new Option(label, value);
-    select.add(item);
-}
+function option(select, value, label) { select.add(new Option(label, value)); }
 function extent(values) {
     const a = Math.min(...values), b = Math.max(...values);
-    const pad = Math.max((b - a) * .06, .5);
+    const pad = Math.max((b - a) * .07, .5);
     return [a - pad, b + pad];
 }
 function gridScale(xDomain, yDomain, area, equal = false) {
@@ -297,10 +683,10 @@ function gridScale(xDomain, yDomain, area, equal = false) {
         edges: [left, top, ranges[0] * sx, ranges[1] * sy],
     };
 }
-function ticks(domain, target = 5) {
+function ticks(domain, target = 4) {
     const raw = (domain[1] - domain[0]) / target;
-    const scale = 10 ** Math.floor(Math.log10(raw));
-    const step = [1, 2, 5, 10].find(value => value >= raw / scale) * scale;
+    const scale = 10 ** Math.floor(Math.log10(Math.max(raw, 1e-6)));
+    const step = ([1, 2, 5, 10].find(value => value >= raw / scale) || 10) * scale;
     const start = Math.ceil(domain[0] / step) * step;
     const values = [];
     for (let value = start; value < domain[1] + step * 1e-8; value += step) {
@@ -314,20 +700,72 @@ function drawGrid(svg, scale, xDomain, yDomain, xLabel, yLabel) {
     for (const value of ticks(xDomain)) {
         const x = scale.x(value);
         coords.append(element("line", { x1: x, y1: top, x2: x, y2: top + height, class: "grid" }),
-            element("text", { x, y: top + height + 17, class: "axis-text", "text-anchor": "middle" }, value));
+            element("text", { x, y: top + height + 15, class: "axis-text", "text-anchor": "middle" }, value));
     }
     for (const value of ticks(yDomain)) {
         const y = scale.y(value);
         coords.append(element("line", { x1: left, y1: y, x2: left + width, y2: y, class: "grid" }),
-            element("text", { x: left - 7, y: y + 4, class: "axis-text", "text-anchor": "end" }, value));
+            element("text", { x: left - 6, y: y + 3.5, class: "axis-text", "text-anchor": "end" }, value));
     }
     coords.append(element("rect", { x: left, y: top, width, height, class: "plot-border" }));
-    coords.append(element("text", { x: left + width / 2, y: top + height + 34, class: "axis-text",
-        "text-anchor": "middle" }, xLabel));
-    const labelX = left - 38, labelY = top + height / 2;
+    coords.append(element("text", { x: left + width / 2, y: top + height + 30, class: "axis-text", "text-anchor": "middle" }, xLabel));
+    const labelX = left - 32, labelY = top + height / 2;
     coords.append(element("text", { x: labelX, y: labelY, class: "axis-text", "text-anchor": "middle",
         transform: "rotate(-90 " + labelX + " " + labelY + ")" }, yLabel));
     svg.append(coords);
+}
+function divergingColor(val, maxAbs) {
+    const t = Math.max(-1, Math.min(1, val / Math.max(maxAbs, 1)));
+    const mix = (a, b, f) => Math.round(a + (b - a) * f);
+    const neg = [194, 59, 82], mid = [138, 152, 166], pos = [18, 134, 152];
+    const [c1, c2, f] = t < 0 ? [mid, neg, -t] : [mid, pos, t];
+    return "rgb(" + mix(c1[0], c2[0], f) + "," + mix(c1[1], c2[1], f) + "," + mix(c1[2], c2[2], f) + ")";
+}
+function rewardBucket(dhp) { return dhp > 5 ? "pos" : dhp < -5 ? "neg" : "mid"; }
+function frameColorOverride(frame, hpScale, deltaScale) {
+    const mode = colorModeInput.value;
+    if (mode === "source") return null;
+    if (mode === "outcome") {
+        if (frame.outcome === "win") return "var(--win)";
+        if (frame.outcome === "loss") return "var(--loss)";
+        return "var(--draw)";
+    }
+    if (mode === "curr-hp") return divergingColor(frame.curr_hp_margin ?? 0, hpScale);
+    if (mode === "hp-delta") return divergingColor(frame.hp_change ?? 0, deltaScale);
+    return null;
+}
+function profileColorOverride(point, hpScale, deltaScale) {
+    const mode = colorModeInput.value;
+    if (mode === "source") return null;
+    const rows = point.windows.map(i => scene.frames[i]);
+    if (mode === "outcome") {
+        const winRate = rows.reduce((s, r) => s + (r.outcome === "win" ? 1 : r.outcome === "draw" ? 0.5 : 0), 0) / rows.length;
+        return divergingColor((winRate - 0.5) * 2, 1);
+    }
+    if (mode === "curr-hp") {
+        return divergingColor(rows.reduce((s, r) => s + (r.curr_hp_margin ?? 0), 0) / rows.length, hpScale);
+    }
+    if (mode === "hp-delta") {
+        return divergingColor(rows.reduce((s, r) => s + (r.hp_change ?? 0), 0) / rows.length, deltaScale);
+    }
+    return null;
+}
+function renderColorLegend() {
+    const legend = get("color-legend");
+    const mode = colorModeInput.value;
+    const isRefined = relationModeInput.value === "refined" && Boolean(scene.comparison?.coordinates?.["relation-refined"]);
+    if (mode === "source") {
+        legend.innerHTML = isRefined
+            ? '<span><b class="key fixed">◆</b>固定脚本</span><span><b class="key mixed">●</b>混合脚本</span>'
+            : '<span><b class="key fixed">◆</b>仅固定脚本</span><span><b class="key mixed">●</b>仅混合脚本</span><span><b class="key shared">○</b>关系类型共有</span>';
+    } else if (mode === "outcome") {
+        legend.innerHTML = '<span><i class="swatch" style="background:var(--win)"></i>终局胜</span>' +
+            '<span><i class="swatch" style="background:var(--loss)"></i>终局负</span><span>◆ 固定 · ● 混合</span>';
+    } else if (mode === "curr-hp") {
+        legend.innerHTML = '<span>敌方血量优</span><i class="grad-bar" style="background:linear-gradient(90deg,#c23b52,#8a98a6,#128698)"></i><span>我方血量优</span>';
+    } else {
+        legend.innerHTML = '<span>ΔHP &lt; 0</span><i class="grad-bar" style="background:linear-gradient(90deg,#c23b52,#8a98a6,#128698)"></i><span>ΔHP &gt; 0</span>';
+    }
 }
 function activeProfiles() {
     const scope = scopeInput.value;
@@ -363,27 +801,54 @@ function hullVertices(points) {
     return [...half(unique), ...half(unique.slice().reverse())];
 }
 
+function trimCore(pts, keepFrac = 0.9) {
+    if (pts.length < 6) return pts;
+    const xs = pts.map(p => p[0]).sort((a, b) => a - b);
+    const ys = pts.map(p => p[1]).sort((a, b) => a - b);
+    const mx = xs[Math.floor(xs.length / 2)], my = ys[Math.floor(ys.length / 2)];
+    const ranked = pts.map(p => ({ p, d: Math.hypot(p[0] - mx, p[1] - my) })).sort((a, b) => a.d - b.d);
+    const keep = Math.max(3, Math.floor(pts.length * keepFrac));
+    return ranked.slice(0, keep).map(r => r.p);
+}
+
 function drawHulls(svg, points, scale) {
-    if (!hullToggle.checked) return;
-    const selected = rosterSelections.get(sceneInput.value);
+    if (!showHulls) return;
+    const envMode = envelopeModeInput.value;
     const grouped = new Map();
-    for (const point of points) {
-        if (!selected.has(point.roster)) continue;
-        if (!grouped.has(point.roster)) grouped.set(point.roster, []);
-        grouped.get(point.roster).push([scale.x(point.xy[0]), scale.y(point.xy[1])]);
-    }
-    for (const [name, members] of grouped) {
-        const hull = hullVertices(members), color = rosterColors.get(name);
-        const sharedAttr = { class: "hull-shape", stroke: color, "data-roster": name, "aria-hidden": "true" };
-        if (hull.length > 2) {
-            svg.append(element("polygon", { ...sharedAttr, points: hull.map(point => point.join(",")).join(" "), fill: color }));
-        } else if (hull.length === 2) {
-            svg.append(element("line", { ...sharedAttr, x1: hull[0][0], y1: hull[0][1], x2: hull[1][0],
-                y2: hull[1][1], "stroke-dasharray": "4 3" }));
-        } else {
-            svg.append(element("circle", { ...sharedAttr, cx: hull[0][0], cy: hull[0][1], r: 9, fill: "none" }));
+    const colorMap = new Map();
+    if (envMode === "reward") {
+        for (const reg of REWARD_REGIMES) colorMap.set(reg.key, reg.color);
+        for (const pt of points) {
+            const k = pt.rewardKey;
+            if (!k || !rewardSelections.has(k)) continue;
+            if (!grouped.has(k)) grouped.set(k, []);
+            grouped.get(k).push([scale.x(pt.xy[0]), scale.y(pt.xy[1])]);
+        }
+    } else {
+        const selected = rosterSelections.get(sceneInput.value);
+        for (const pt of points) {
+            if (!selected.has(pt.roster)) continue;
+            if (!grouped.has(pt.roster)) grouped.set(pt.roster, []);
+            grouped.get(pt.roster).push([scale.x(pt.xy[0]), scale.y(pt.xy[1])]);
+            colorMap.set(pt.roster, rosterColors.get(pt.roster));
         }
     }
+    const hullLayer = element("g", { class: "hull-layer" });
+    for (const [name, members] of grouped) {
+        const used = envMode === "roster-core" ? trimCore(members, 0.9) : members;
+        const hull = hullVertices(used), color = colorMap.get(name) || "#3876b4";
+        const sharedAttr = { class: "hull-shape", stroke: color, "data-group": name, "aria-hidden": "true" };
+        if (envMode === "roster-core") sharedAttr["stroke-dasharray"] = "5 3";
+        if (hull.length > 2) {
+            hullLayer.append(element("polygon", { ...sharedAttr, points: hull.map(point => point.join(",")).join(" "), fill: color }));
+        } else if (hull.length === 2) {
+            hullLayer.append(element("line", { ...sharedAttr, x1: hull[0][0], y1: hull[0][1], x2: hull[1][0],
+                y2: hull[1][1], "stroke-dasharray": "4 3" }));
+        } else {
+            hullLayer.append(element("circle", { ...sharedAttr, cx: hull[0][0], cy: hull[0][1], r: 8, fill: "none" }));
+        }
+    }
+    svg.append(hullLayer);
 }
 
 function renderRosterOptions() {
@@ -398,53 +863,201 @@ function renderRosterOptions() {
     const colorOrder = [...new Set([...defaults, ...sorted])];
     rosterColors = new Map(colorOrder.map((name, i) => [name,
         rosterPalette[i] ?? "hsl(" + ((i * 137.5) % 360) + " 52% 44%)"]));
-    if (!rosterSelections.has(map)) {
-        rosterSelections.set(map, new Set(defaults));
-    }
+    if (!rosterSelections.has(map)) rosterSelections.set(map, new Set(defaults));
     const selected = rosterSelections.get(map);
-    const counts = new Map();
+
+    const visibleCounts = new Map();
     for (const point of profiles) {
         const name = rosterLabel(point);
-        counts.set(name, (counts.get(name) ?? 0) + 1);
+        visibleCounts.set(name, (visibleCounts.get(name) ?? 0) + point.windows.length);
     }
-    const options = get("roster-options");
-    options.replaceChildren();
-    for (const name of sorted) {
+
+    const topChips = get("roster-chips");
+    topChips.replaceChildren();
+    const hullBtn = document.createElement("button");
+    hullBtn.type = "button";
+    hullBtn.className = "roster-chip" + (showHulls ? "" : " off");
+    hullBtn.textContent = showHulls ? "包络: 开" : "包络: 关";
+    hullBtn.addEventListener("click", () => { showHulls = !showHulls; renderRosterOptions(); redrawPlots(); });
+    topChips.append(hullBtn);
+
+    if (envelopeModeInput.value === "reward") {
+        for (const reg of REWARD_REGIMES) {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "roster-chip" + (rewardSelections.has(reg.key) && showHulls ? "" : " off");
+            const key = document.createElement("b");
+            key.className = "roster-key";
+            key.style.borderColor = reg.color;
+            key.style.background = "color-mix(in srgb, " + reg.color + " 16%, transparent)";
+            btn.append(key, reg.label);
+            btn.addEventListener("click", () => {
+                showHulls = true;
+                if (rewardSelections.has(reg.key)) rewardSelections.delete(reg.key);
+                else rewardSelections.add(reg.key);
+                renderRosterOptions();
+                redrawPlots();
+            });
+            topChips.append(btn);
+        }
+    } else {
+        const makeChip = (name, showCount) => {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "roster-chip" + (selected.has(name) && showHulls ? "" : " off");
+            btn.title = "点击显示/隐藏 " + name + " 存活阵容包络";
+            const key = document.createElement("b");
+            key.className = "roster-key";
+            key.style.color = rosterColors.get(name);
+            key.style.borderColor = rosterColors.get(name);
+            key.style.background = "color-mix(in srgb, " + rosterColors.get(name) + " 14%, transparent)";
+            btn.append(key, showCount ? name + " (" + (visibleCounts.get(name) ?? 0) + ")" : name);
+            btn.addEventListener("click", () => {
+                showHulls = true;
+                if (selected.has(name)) selected.delete(name);
+                else selected.add(name);
+                renderRosterOptions();
+                redrawPlots();
+            });
+            return btn;
+        };
+        const topList = colorOrder.filter(n => visibleCounts.has(n)).slice(0, 6);
+        for (const name of topList) topChips.append(makeChip(name, false));
+        const allOptions = get("roster-options");
+        allOptions.replaceChildren();
+        for (const name of sorted) allOptions.append(makeChip(name, true));
+    }
+}
+
+function availableSpaceIds() {
+    const coords = scene?.comparison?.coordinates || {};
+    return STRIP_SPACES.filter(s => {
+        if (s.id === "relation") return true;
+        if (s.id === "bk") return Boolean(coords["bk-position"] || coords["bk-joint"]);
+        return Boolean(coords[s.id]);
+    }).map(s => s.id);
+}
+
+function renderSpaceToggles() {
+    const avail = new Set(availableSpaceIds());
+    const host = get("space-toggles");
+    host.replaceChildren();
+    for (const space of STRIP_SPACES) {
+        if (!avail.has(space.id)) continue;
         const label = document.createElement("label");
-        const field = document.createElement("input");
-        field.type = "checkbox";
-        field.checked = selected.has(name);
-        field.addEventListener("change", () => {
-            if (field.checked) selected.add(name);
-            else selected.delete(name);
-            renderHullLegend();
+        label.className = "space-chip" + (activeSpaces.has(space.id) ? " active" : "");
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = activeSpaces.has(space.id);
+        input.addEventListener("change", () => {
+            if (input.checked) {
+                activeSpaces.add(space.id);
+            } else if (activeSpaces.size > 1) {
+                activeSpaces.delete(space.id);
+            } else {
+                input.checked = true;
+                return;
+            }
+            renderSpaceToggles();
             redrawPlots();
         });
-        label.append(field, name + " · " + (counts.get(name) ?? 0) + " 种");
-        options.append(label);
+        label.append(input, space.short);
+        host.append(label);
     }
-    renderHullLegend();
+    const presetButtons = get("space-presets").querySelectorAll("button");
+    const isSame = arr => arr.length === activeSpaces.size && arr.every(k => activeSpaces.has(k));
+    presetButtons.forEach(btn => {
+        const p = btn.dataset.preset;
+        const pressed = (p === "classic3" && isSame(["relation", "cnn", "bk"]))
+            || (p === "all5" && isSame([...avail]))
+            || (p === "encoders4" && isSame(["im-medoid", "unit-set", "cnn", "bk"].filter(k => avail.has(k))));
+        btn.setAttribute("aria-pressed", String(pressed));
+    });
 }
 
-function renderHullLegend() {
-    const legend = get("hull-legend");
-    legend.replaceChildren();
-    if (!hullToggle.checked) return;
-    const active = new Set(profiles.map(rosterLabel));
-    for (const name of rosterSelections.get(sceneInput.value)) {
-        if (!active.has(name)) continue;
-        const item = document.createElement("span"), key = document.createElement("b");
-        key.className = "roster-key";
-        key.style.color = rosterColors.get(name);
-        key.style.background = "color-mix(in srgb, " + rosterColors.get(name) + " 12%, transparent)";
-        key.setAttribute("aria-hidden", "true");
-        item.append(key, name);
-        legend.append(item);
-    }
+function clientToSvg(svg, clientX, clientY) {
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return { x: 0, y: 0 };
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    const res = pt.matrixTransform(ctm.inverse());
+    return { x: res.x, y: res.y };
 }
 
-function drawProjection(svg, points, population, rawFrames = false) {
-    const area = [58, 12, 689, 376];
+function attachBrush(svg, area, plottedMarks) {
+    const [left, top, width, height] = area;
+    const right = left + width, bottom = top + height;
+    const clampX = x => Math.max(left, Math.min(right, x));
+    const clampY = y => Math.max(top, Math.min(bottom, y));
+    let start = null, rect = null, dragged = false, pointerId = null;
+
+    svg.addEventListener("pointerdown", event => {
+        if (event.button !== 0) return;
+        const p = clientToSvg(svg, event.clientX, event.clientY);
+        if (p.x < left - 6 || p.x > right + 6 || p.y < top - 6 || p.y > bottom + 6) return;
+        start = { x: clampX(p.x), y: clampY(p.y), shift: event.shiftKey };
+        dragged = false;
+        pointerId = event.pointerId;
+        svg.setPointerCapture(pointerId);
+    });
+
+    svg.addEventListener("pointermove", event => {
+        if (!start || event.pointerId !== pointerId) return;
+        const p = clientToSvg(svg, event.clientX, event.clientY);
+        const cx = clampX(p.x), cy = clampY(p.y);
+        if (!dragged && Math.hypot(cx - start.x, cy - start.y) > 5) {
+            dragged = true;
+            rect = element("rect", { class: "brush-rect" });
+            svg.append(rect);
+        }
+        if (dragged && rect) {
+            rect.setAttribute("x", Math.min(start.x, cx).toFixed(1));
+            rect.setAttribute("y", Math.min(start.y, cy).toFixed(1));
+            rect.setAttribute("width", Math.abs(cx - start.x).toFixed(1));
+            rect.setAttribute("height", Math.abs(cy - start.y).toFixed(1));
+        }
+    });
+
+    const finish = event => {
+        if (!start || event.pointerId !== pointerId) return;
+        const p = clientToSvg(svg, event.clientX, event.clientY);
+        const cx = clampX(p.x), cy = clampY(p.y);
+        if (rect) { rect.remove(); rect = null; }
+        if (svg.hasPointerCapture(pointerId)) svg.releasePointerCapture(pointerId);
+
+        if (dragged) {
+            suppressClickUntil = performance.now() + 260;
+            const x0 = Math.min(start.x, cx), x1 = Math.max(start.x, cx);
+            const y0 = Math.min(start.y, cy), y1 = Math.max(start.y, cy);
+            const next = start.shift ? new Set(brushedFrames) : new Set();
+            for (const item of plottedMarks) {
+                if (item.x >= x0 && item.x <= x1 && item.y >= y0 && item.y <= y1) {
+                    for (const fIdx of item.frames) next.add(fIdx);
+                }
+            }
+            brushedFrames = next;
+            brushCursor = 0;
+            syncSelectionStates();
+            if (brushedFrames.size > 0) {
+                const ordered = sortedBrushedList();
+                if (!brushedFrames.has(selectedFrame)) chooseFrame(ordered[0]);
+            }
+        } else {
+            const onMark = event.target instanceof Element && event.target.closest(".mark");
+            if (!onMark && brushedFrames.size > 0) {
+                brushedFrames.clear();
+                syncSelectionStates();
+            }
+        }
+        start = null; dragged = false; pointerId = null;
+    };
+
+    svg.addEventListener("pointerup", finish);
+    svg.addEventListener("pointercancel", finish);
+}
+
+function drawProjection(svg, points, population, rawFrames = true, area = [44, 10, 362, 224]) {
     const domains = [0, 1].map(index => extent(population.map(xy => xy[index])));
     const spanPerPixel = Math.max(...domains.map(([min, max], index) => (max - min) / area[index + 2]));
     const [xDomain, yDomain] = domains.map(([min, max], index) => {
@@ -455,63 +1068,457 @@ function drawProjection(svg, points, population, rawFrames = false) {
     svg.replaceChildren();
     drawGrid(svg, scale, xDomain, yDomain, "t-SNE 1", "t-SNE 2");
     drawHulls(svg, points, scale);
-    const size = rawFrames ? .75 : 1;
-    for (const point of points) {
-        const x = scale.x(point.xy[0]), y = scale.y(point.xy[1]);
-        const mark = element("g", { class: "mark " + point.type, transform: "translate(" + x + " " + y + ")",
-            tabindex: "0", role: "button", "aria-label": point.description, "data-index": point.index });
-        mark.append(element("title", {}, point.description), element("circle", { r: 10.5 * size, fill: "transparent" }),
-            element("circle", { r: 8.1, class: "focus-ring" }));
-        if (point.type === "fixed") {
-            const r = 6 * size;
+    const size = rawFrames ? 0.74 : 0.94;
+
+    const buckets = new Map();
+    const screenPts = points.map(pt => {
+        const sx = scale.x(pt.xy[0]), sy = scale.y(pt.xy[1]);
+        const key = Math.round(sx / 1.8) + "," + Math.round(sy / 1.8);
+        if (!buckets.has(key)) buckets.set(key, []);
+        const idxInBucket = buckets.get(key).length;
+        buckets.get(key).push(pt);
+        return { pt, sx, sy, key, idxInBucket };
+    });
+
+    const marksLayer = element("g", { class: "marks-layer" });
+    const plottedMarks = [];
+    for (const item of screenPts) {
+        const { pt, sx, sy, key, idxInBucket } = item;
+        const groupSize = buckets.get(key).length;
+        let x = sx, y = sy;
+        if (rawFrames && groupSize > 1) {
+            const angle = (2 * Math.PI * idxInBucket) / groupSize;
+            const rad = Math.min(4.8, 1.9 + groupSize * 0.4);
+            x += Math.cos(angle) * rad;
+            y += Math.sin(angle) * rad;
+        }
+        const frames = pt.windows ?? [pt.frame];
+        const cls = "mark " + pt.type;
+        const attrs = {
+            class: cls, transform: "translate(" + x.toFixed(2) + " " + y.toFixed(2) + ")",
+            tabindex: "0", role: "button", "aria-label": pt.description,
+            "data-frames": frames.join(","), "data-primary": String(pt.frame),
+        };
+        if (pt.color) attrs.style = "color:" + pt.color;
+        const mark = element("g", attrs);
+        mark.append(
+            element("title", {}, pt.description),
+            element("circle", { r: 8.5 * size, fill: "transparent" }),
+            element("circle", { r: 9.8 * size, class: "focus-halo" }),
+            element("circle", { r: 7.4 * size, class: "focus-ring" }),
+        );
+        if (pt.type === "fixed") {
+            const r = 5.4 * size;
             mark.append(element("polygon", { points: "0,-" + r + " " + r + ",0 0," + r + " -" + r + ",0", class: "disc" }));
         } else {
-            mark.append(element("circle", { r: point.type === "shared" ? 5.2 : 5.0 * size, class: "disc" }));
+            mark.append(element("circle", { r: pt.type === "shared" ? 4.8 * size : 4.5 * size, class: "disc" }));
         }
-        mark.addEventListener("click", () => chooseFrame(point.frame));
+        mark.addEventListener("click", () => {
+            if (performance.now() < suppressClickUntil) return;
+            chooseFrame(pt.frame);
+        });
         mark.addEventListener("keydown", event => {
             if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
-                chooseFrame(point.frame);
+                chooseFrame(pt.frame);
             }
         });
-        svg.append(mark);
+        marksLayer.append(mark);
+        plottedMarks.push({ x, y, frames, mark });
     }
+    svg.append(marksLayer);
+    attachBrush(svg, scale.edges, plottedMarks);
+    return { svg, marksLayer, plottedMarks };
 }
 
-function activeMarks() {
-    if (selectedFrame === undefined) return;
-    const selection = scene.frames[selectedFrame];
-    for (const [svg, index] of [[scatter, selection.point], [cnnPlot, selectedFrame], [bkPlot, selectedFrame]]) {
-        for (const mark of svg.querySelectorAll(".mark")) mark.classList.toggle("active", Number(mark.dataset.index) === index);
+function drawMiniBattlefield(svg, frame, bounds) {
+    const xDomain = bounds.map(p => p[0]), yDomain = bounds.map(p => p[1]);
+    const scale = gridScale(xDomain, yDomain, [8, 6, 204, 102], true);
+    svg.replaceChildren();
+    const [l, t, w, h] = scale.edges;
+    svg.append(element("rect", { x: l, y: t, width: w, height: h, class: "plot-border", rx: "3" }));
+    for (const [i, j] of frame.reach) {
+        const a = frame.units[0][i], b = frame.units[1][j];
+        if (!a || !b) continue;
+        svg.append(element("line", { x1: scale.x(a[0]), y1: scale.y(a[1]), x2: scale.x(b[0]), y2: scale.y(b[1]),
+            stroke: "#8896a8", "stroke-opacity": ".45", "stroke-width": "0.9" }));
+    }
+    frame.units.forEach((units, side) => units.forEach(([x, y, hp]) => {
+        const c = element("circle", { cx: scale.x(x), cy: scale.y(y), r: 3.4,
+            fill: side ? "var(--enemy)" : "var(--ally)", stroke: "var(--paper)", "stroke-width": ".7" });
+        c.append(element("title", {}, (side ? "敌" : "我") + " HP " + hp));
+        svg.append(c);
+    }));
+}
+
+function sortedBrushedList() {
+    const list = [...brushedFrames];
+    const mode = get("brush-sort").value;
+    if (mode === "dhp-desc") return list.sort((a, b) => (scene.frames[b].hp_change ?? 0) - (scene.frames[a].hp_change ?? 0));
+    if (mode === "dhp-asc") return list.sort((a, b) => (scene.frames[a].hp_change ?? 0) - (scene.frames[b].hp_change ?? 0));
+    if (mode === "hp-desc") return list.sort((a, b) => (scene.frames[b].curr_hp_margin ?? 0) - (scene.frames[a].curr_hp_margin ?? 0));
+    if (mode === "dist-asc") return list.sort((a, b) => (scene.frames[a].geom?.centroid_dist ?? 999) - (scene.frames[b].geom?.centroid_dist ?? 999));
+    return list.sort((a, b) => a - b);
+}
+
+function renderBrushedGallery() {
+    const wrap = get("brushed-gallery-wrap");
+    const grid = get("brushed-gallery-grid");
+    const list = sortedBrushedList();
+    wrap.hidden = list.length === 0;
+    if (!list.length) { grid.replaceChildren(); return; }
+
+    const eps = new Set(list.map(i => scene.frames[i]?.episode));
+    get("brushed-gallery-title").textContent = "框选对应的全部实际观测（共 " + list.length + " 帧 · 跨 " + eps.size + " 局）";
+    grid.hidden = galleryCollapsed;
+    get("gallery-toggle").textContent = galleryCollapsed ? "展开全部 " + list.length + " 帧" : "收起画廊";
+    if (galleryCollapsed) return;
+
+    const signed = v => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1);
+    const frag = document.createDocumentFragment();
+    for (const idx of list) {
+        const f = scene.frames[idx];
+        if (!f) continue;
+        const pt = scene.points[f.point];
+        const card = document.createElement("div");
+        card.className = "obs-card" + (idx === selectedFrame ? " active" : "");
+        card.dataset.frameIndex = String(idx);
+        const head = document.createElement("div");
+        head.className = "obs-card-head";
+        const pill = document.createElement("span");
+        pill.className = "outcome-pill " + (f.outcome || "draw");
+        pill.textContent = outcomeDisplay[f.outcome] ?? "—";
+        head.append(document.createTextNode("#" + idx + " · " + (pt ? rosterLabel(pt) : "") + " · 步 " + f.step), pill);
+
+        const sub = document.createElement("div");
+        sub.className = "obs-card-sub";
+        sub.textContent = display[f.behavior] + " · " + f.layout + "/" + f.opponent.toUpperCase() + " · " + f.macro;
+
+        const miniSvg = element("svg", { viewBox: "0 0 220 114", "aria-label": "帧 #" + idx + " 单位分布" });
+        drawMiniBattlefield(miniSvg, f, scene.bounds);
+
+        const metrics = document.createElement("div");
+        metrics.className = "obs-card-metrics";
+        metrics.innerHTML =
+            "<span>HP差 " + signed(f.curr_hp_margin ?? 0) + "</span>" +
+            "<span>ΔHP " + signed(f.hp_change ?? 0) + "</span>" +
+            "<span>G_t " + signed(f.disc_hp_return ?? 0) + "</span>" +
+            (f.geom?.centroid_dist != null ? "<span>质心距 " + f.geom.centroid_dist.toFixed(1) + "</span>" : "");
+
+        card.append(head, sub, miniSvg, metrics);
+        card.addEventListener("click", () => chooseFrame(idx));
+        frag.append(card);
+    }
+    grid.replaceChildren(frag);
+}
+
+function updateBrushBar() {
+    const bar = get("brush-bar");
+    const list = sortedBrushedList();
+    bar.hidden = list.length === 0;
+    if (!list.length) { renderBrushedGallery(); return; }
+    const rows = list.map(i => scene.frames[i]).filter(Boolean);
+    const eps = new Set(rows.map(r => r.episode));
+    const rosterCount = new Map();
+    let wins = 0, hpSum = 0, deltaSum = 0, distSum = 0, distN = 0;
+    for (const r of rows) {
+        const pt = scene.points[r.point];
+        const rk = pt ? rosterLabel(pt) : "?";
+        rosterCount.set(rk, (rosterCount.get(rk) ?? 0) + 1);
+        if (r.outcome === "win") wins += 1;
+        hpSum += r.curr_hp_margin ?? 0;
+        deltaSum += r.hp_change ?? 0;
+        if (r.geom?.centroid_dist != null) { distSum += r.geom.centroid_dist; distN += 1; }
+    }
+    const topRosters = [...rosterCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4)
+        .map(([k, v]) => k + "×" + v).join(" · ");
+    const signed = v => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1);
+    get("brush-stats").innerHTML =
+        "<span>已框选 <strong>" + rows.length + "</strong> 个观测窗口（跨 " + eps.size + " 局）</span>" +
+        "<span>阵容：" + topRosters + "</span>" +
+        "<span>终局胜率：" + (100 * wins / rows.length).toFixed(1) + "%</span>" +
+        "<span>均血量差：" + signed(hpSum / rows.length) + "</span>" +
+        "<span>均 ΔHP：" + signed(deltaSum / rows.length) + "</span>" +
+        (distN ? "<span>均质心距：" + (distSum / distN).toFixed(2) + "</span>" : "");
+    renderBrushedGallery();
+}
+
+function syncSelectionStates(refreshGallery = true) {
+    const hasBrush = brushedFrames.size > 0;
+    for (const entry of renderedSvgs) {
+        entry.svg.classList.toggle("has-brush", hasBrush);
+        const raise = [];
+        for (const item of entry.plottedMarks) {
+            const isActive = selectedFrame !== undefined && item.frames.includes(selectedFrame);
+            const isBrushed = hasBrush && item.frames.some(f => brushedFrames.has(f));
+            item.mark.classList.toggle("active", isActive);
+            item.mark.classList.toggle("brushed", isBrushed);
+            item.mark.classList.toggle("dimmed", hasBrush && !isBrushed);
+            if (isBrushed || isActive) raise.push({ mark: item.mark, isActive });
+        }
+        raise.sort((a, b) => Number(a.isActive) - Number(b.isActive));
+        for (const r of raise) entry.marksLayer.append(r.mark);
+    }
+    if (refreshGallery) {
+        updateBrushBar();
+    } else {
+        for (const card of get("brushed-gallery-grid").querySelectorAll(".obs-card")) {
+            card.classList.toggle("active", Number(card.dataset.frameIndex) === selectedFrame);
+        }
     }
 }
 
 function redrawPlots() {
-    const points = profiles.map(point => ({
-        ...point, roster: rosterLabel(point), frame: point.windows[0],
-        description: point.id + "，" + rosterLabel(point) + "，" + labels[point.type] +
-            "，固定 " + point.fixedCount + " 条，混合 " + point.mixedCount + " 条",
+    renderColorLegend();
+    const hpScale = Math.max(45, ...scene.frames.map(f => Math.abs(f.curr_hp_margin ?? 0)));
+    const deltaScale = Math.max(15, ...scene.frames.map(f => Math.abs(f.hp_change ?? 0)));
+    const coords = scene.comparison?.coordinates || {};
+    const isRefined = relationModeInput.value === "refined" && Boolean(coords["relation-refined"]);
+
+    const buildFramePoints = xy => profiles.flatMap(point => point.windows.map(index => {
+        const frame = scene.frames[index];
+        const distNote = frame.geom?.centroid_dist != null ? " · 质心距 " + frame.geom.centroid_dist.toFixed(2) : "";
+        return {
+            index, frame: index, windows: [index], xy: xy[index], roster: rosterLabel(point),
+            rewardKey: rewardBucket(frame.hp_change ?? 0),
+            type: frame.behavior === fixed ? "fixed" : "mixed",
+            color: frameColorOverride(frame, hpScale, deltaScale),
+            description: "#" + index + " · " + point.id + " (" + rosterLabel(point) + ") · " + display[frame.behavior] + " · " +
+                frame.layout + "/" + frame.opponent.toUpperCase() + " 步 " + frame.step +
+                " · 结局 " + (outcomeDisplay[frame.outcome] ?? "—") +
+                " · HP差 " + (frame.curr_hp_margin ?? 0).toFixed(0) +
+                " · ΔHP " + (frame.hp_change ?? 0).toFixed(1) + distNote,
+        };
     }));
-    drawProjection(scatter, points, scene.points.map(point => point.xy));
-    if (scene.comparison) {
-        for (const [svg, method] of [[cnnPlot, "cnn"], [bkPlot, bkDistance.value]]) {
-            const xy = scene.comparison.coordinates[method];
-            const frames = points.flatMap(point => point.windows.map(index => {
-                const frame = scene.frames[index];
-                return { index, frame: index, xy: xy[index], roster: point.roster,
-                    type: frame.behavior === fixed ? "fixed" : "mixed",
-                    description: point.roster + "，" + display[frame.behavior] + "，" + frame.layout + " / " +
-                        frame.opponent.toUpperCase() + "，第 " + frame.step + " 步" };
-            }));
-            drawProjection(svg, frames, xy, true);
+
+    const profilePoints = profiles.map(point => {
+        const avgDhp = point.windows.reduce((s, i) => s + (scene.frames[i].hp_change ?? 0), 0) / point.windows.length;
+        return {
+            ...point, roster: rosterLabel(point), frame: point.windows[0],
+            rewardKey: rewardBucket(avgDhp),
+            color: profileColorOverride(point, hpScale, deltaScale),
+            description: point.id + "，" + rosterLabel(point) + "，" + labels[point.type] +
+                "，固定 " + point.fixedCount + " 条，混合 " + point.mixedCount + " 条",
+        };
+    });
+
+    const avail = availableSpaceIds();
+    const visibleSpaces = avail.filter(id => activeSpaces.has(id));
+    const hasRef = visibleSpaces.includes("relation");
+    const others = visibleSpaces.filter(id => id !== "relation");
+
+    const layoutGrid = get("strip-layout-grid");
+    const refSlot = get("strip-ref-slot");
+    const quadSlot = get("strip-quad-slot");
+    refSlot.replaceChildren();
+    quadSlot.replaceChildren();
+    refSlot.hidden = !hasRef;
+    quadSlot.hidden = others.length === 0;
+    layoutGrid.classList.toggle("no-ref", !hasRef);
+    layoutGrid.classList.toggle("only-ref", hasRef && others.length === 0);
+    quadSlot.className = "strip-quad-slot" + (others.length <= 2 ? " count-" + others.length : "");
+    renderedSvgs = [];
+
+    const envLabel = envelopeModeInput.value === "reward" ? "奖励换血态势包络"
+        : envelopeModeInput.value === "roster-core" ? "90% 核心存活阵容包络" : "存活阵容包络";
+    get("strip-title").textContent = sceneInput.value + " · 同一批观测在 " + visibleSpaces.length + " 种空间中的" + envLabel + "（支持跨图框选）";
+
+    const buildCard = (sid, isBigRef) => {
+        const spec = STRIP_SPACES.find(s => s.id === sid);
+        const card = document.createElement("div");
+        card.className = "strip-card" + (isBigRef ? " ref-card" : "");
+        const head = document.createElement("div");
+        head.className = "strip-card-head";
+        const h3 = document.createElement("h3");
+        const sub = document.createElement("p");
+        sub.className = "strip-card-sub";
+
+        let svgPoints, population, rawFrames = true;
+        if (sid === "relation") {
+            h3.textContent = isRefined ? spec.titleRefined : spec.titleTypes;
+            sub.textContent = isRefined ? spec.descRefined : spec.descTypes;
+            if (isRefined) {
+                population = coords["relation-refined"];
+                svgPoints = buildFramePoints(population);
+            } else {
+                population = scene.points.map(p => p.xy);
+                svgPoints = profilePoints;
+                rawFrames = false;
+            }
+            const badge = document.createElement("span");
+            badge.className = "ref-badge";
+            badge.textContent = "参考度量";
+            head.append(h3, badge);
+        } else if (sid === "bk") {
+            h3.textContent = spec.title;
+            sub.textContent = spec.descMap[bkMetric] || "";
+            const sel = document.createElement("select");
+            sel.setAttribute("aria-label", "BK-tree 距离分量");
+            option(sel, "bk-position", "一级位置");
+            option(sel, "bk-health", "二级血量");
+            option(sel, "bk-joint", "两级联合");
+            sel.value = bkMetric;
+            sel.addEventListener("change", () => { bkMetric = sel.value; redrawPlots(); });
+            head.append(h3, sel);
+            population = coords[bkMetric];
+            svgPoints = buildFramePoints(population);
+        } else {
+            h3.textContent = spec.title;
+            sub.textContent = spec.desc;
+            head.append(h3);
+            population = coords[sid];
+            svgPoints = buildFramePoints(population);
         }
-        get("bk-description").textContent = bkDistance.value === "bk-position"
-            ? "一级位置匹配代价，包含未配对单位的补位成本"
-            : "二级 HP 差，比较按位置匹配的单位";
-    }
-    activeMarks();
+
+        const vb = isBigRef ? "0 0 480 490" : "0 0 420 264";
+        const area = isBigRef ? [46, 10, 420, 434] : [44, 10, 362, 212];
+        const svg = element("svg", { class: "tsne-svg", viewBox: vb, role: "group", "aria-label": h3.textContent });
+        card.append(head, sub, svg);
+        renderedSvgs.push(drawProjection(svg, svgPoints, population, rawFrames, area));
+        return card;
+    };
+
+    if (hasRef) refSlot.append(buildCard("relation", true));
+    for (const sid of others) quadSlot.append(buildCard(sid, false));
+
+    const totalWin = profiles.reduce((s, p) => s + p.windows.length, 0);
+    const val = scene.comparison?.validity?.[scopeInput.value];
+    const col = val?.collapsed_pairs;
+    const dispNote = isRefined && col
+        ? " · 零距离重合对：" + col.pure_qualitative + " → " + col.refined_qualitative + "（仅剩同开局步 0）"
+        : "";
+    get("scatter-note").textContent = "当前范围 " + totalWin + " 个观测窗口 / " + profiles.length + " 种关系类型" + dispNote +
+        " · 拖拽任意子图即可跨全空间框选并在下方列出对应全部实际观测。";
+
+    syncSelectionStates();
 }
+
+function renderSplitDiagnosis() {
+    const diag = scene.comparison?.validity?.[scopeInput.value]?.split_diagnosis;
+    const sec = get("split-diagnosis");
+    sec.hidden = !diag || !diag.by_method;
+    if (sec.hidden) return;
+
+    const cohort = get("diag-cohort").value;
+    const metricKey = get("diag-metric").value;
+    const mSpec = {
+        dhp: { near: "dhp_near", far: "dhp_far", label: "单步奖励差 |ΔHP|", unit: "" },
+        sr: { near: "sr_near", far: "sr_far", label: "短期奖励差 |short_reward|", unit: "" },
+        win: { near: "win_near", far: "win_far", label: "终局胜负分歧 |Win|", unit: "" },
+    }[metricKey];
+
+    const cnnAll = diag.by_method.cnn?.all;
+    const imAll = diag.by_method["im-medoid"]?.all;
+    const cnnTrain = scene.comparison?.cnn?.sample_counts?.train ?? 71;
+    const callout = get("diag-callout");
+    callout.replaceChildren();
+    const calloutLines = [
+        "【核心解读 1 · 为什么不能只靠“阵容凸包大小”否定 IM-CNN？】" +
+            (cnnAll && cnnAll.dhp_near != null && cnnAll.dhp_far != null
+                ? "在 " + sceneInput.value + " 中，对「定性关系极近且同阵容」的跨局状态对，IM-CNN 拉远的对（后25%）平均单步奖励差 |ΔHP| 达 " +
+                  cnnAll.dhp_far.toFixed(2) + "（short_reward 差 " + (cnnAll.sr_far?.toFixed(2) ?? "—") + "），显著高于拉近对的 " +
+                  cnnAll.dhp_near.toFixed(2) + "（" + (cnnAll.sr_near?.toFixed(2) ?? "—") + "）——说明 IM-CNN 是在按「真实换血奖励」主动拆分定性相近点，这些点在 RL 中本来就不该复用同一 Q 值。"
+                : "IM-CNN 按动作条件换血奖励训练，主动将定性相同但实际火力交换悬殊的状态分开。"),
+        "【核心解读 2 · 区分 IM-CNN 与 IM-medoid】" +
+            (imAll && imAll.dhp_near != null && imAll.dhp_far != null
+                ? "对比 IM-medoid：拉近对 |ΔHP|=" + imAll.dhp_near.toFixed(2) + " vs 拉远对 " + imAll.dhp_far.toFixed(2) +
+                  "，几乎没有奖励区分度（多为 24 位直方图哈希边界离散跳变），因此 IM-medoid 在 v09 MM8m 的提分主要来自 32 码字压缩复用而非度量本身。"
+                : "IM-medoid 缺少奖励监督，其散落主要来自离散哈希跳变。"),
+        "【核心解读 3 · 为什么 v09-08 MM4 的 IM-CNN 表现明显更规整？】SC2BA " + sceneInput.value +
+            " 仅用 " + cnnTrain + " 条训练窗口横跨 8 种开局布局 × 3 种对手，且 2–3 个极端残血翻盘帧拉大了原始凸包（点击上方「包络口径 → 90%核心·去异常点」立即可见）；而 v09 MM4 用 8,400 条训练样本（多 118×）拟合单一地图分布，IM-CNN 在 MM4 冻结胜率达 99.33%，且同阵容 3v3 核心半径比 BK-tree 更紧凑（0.075 vs 0.094）。",
+    ];
+    for (const line of calloutLines) {
+        const p = document.createElement("p");
+        p.textContent = line;
+        callout.append(p);
+    }
+
+    // Draw near vs far grouped bar chart
+    const svg = get("diag-bars-svg");
+    svg.replaceChildren();
+    const order = ["im-medoid", "unit-set", "cnn", "bk-joint", "relation-refined"].filter(k => diag.by_method[k]?.[cohort]);
+    const shortName = { "im-medoid": "IM-medoid", "unit-set": "Unit-set", cnn: "IM-CNN", "bk-joint": "BK-joint", "relation-refined": "定性+间距" };
+    if (!order.length) {
+        svg.append(element("text", { x: 235, y: 120, "text-anchor": "middle", class: "axis-text" }, "当前筛选范围样本对不足"));
+    } else {
+        const vals = order.flatMap(k => [diag.by_method[k][cohort][mSpec.near] ?? 0, diag.by_method[k][cohort][mSpec.far] ?? 0]);
+        const yMax = Math.max(0.5, Math.max(...vals) * 1.18);
+        const area = [46, 24, 410, 184];
+        const yScale = v => area[1] + (1 - v / yMax) * area[3];
+        for (const tv of ticks([0, yMax], 4)) {
+            const y = yScale(tv);
+            svg.append(element("line", { x1: area[0], y1: y, x2: area[0] + area[2], y2: y, class: "grid" }),
+                element("text", { x: area[0] - 6, y: y + 3.5, class: "axis-text", "text-anchor": "end" }, tv));
+        }
+        svg.append(element("rect", { x: area[0], y: area[1], width: area[2], height: area[3], class: "plot-border" }));
+        // Legend top right
+        svg.append(
+            element("rect", { x: area[0] + 10, y: 5, width: 10, height: 10, fill: "#128698", rx: 2 }),
+            element("text", { x: area[0] + 24, y: 14, class: "axis-text" }, "空间内拉近 (前25%)"),
+            element("rect", { x: area[0] + 154, y: 5, width: 10, height: 10, fill: "#c23b52", rx: 2 }),
+            element("text", { x: area[0] + 168, y: 14, class: "axis-text" }, "空间内拉远 (后25%)"),
+        );
+        const slotW = area[2] / order.length;
+        const bw = Math.min(26, slotW * 0.3);
+        order.forEach((k, idx) => {
+            const row = diag.by_method[k][cohort];
+            const vNear = row[mSpec.near] ?? 0, vFar = row[mSpec.far] ?? 0;
+            const cx = area[0] + (idx + 0.5) * slotW;
+            const yN = yScale(vNear), yF = yScale(vFar), base = area[1] + area[3];
+            svg.append(
+                element("rect", { x: cx - bw - 2, y: yN, width: bw, height: Math.max(1, base - yN), fill: "#128698", opacity: ".85", rx: 2 }),
+                element("text", { x: cx - bw / 2 - 2, y: yN - 4, class: "axis-text", "text-anchor": "middle", "font-size": "10" }, vNear.toFixed(metricKey === "win" ? 2 : 1)),
+                element("rect", { x: cx + 2, y: yF, width: bw, height: Math.max(1, base - yF), fill: "#c23b52", opacity: ".85", rx: 2 }),
+                element("text", { x: cx + bw / 2 + 2, y: yF - 4, class: "axis-text", "text-anchor": "middle", "font-size": "10" }, vFar.toFixed(metricKey === "win" ? 2 : 1)),
+                element("text", { x: cx, y: base + 17, class: "axis-text", "text-anchor": "middle" }, shortName[k]),
+            );
+        });
+    }
+    get("diag-chart-title").textContent = "定性相近对（n=" + (diag.by_method.cnn?.[cohort]?.pairs ?? 0) + "）：" + mSpec.label + "（拉近 vs 拉远）";
+
+    // Concrete paired battlefield cases
+    const grid = get("diag-cases-grid");
+    grid.replaceChildren();
+    const signed = v => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1);
+    for (const c of (diag.cases || [])) {
+        const fa = scene.frames[c.a], fb = scene.frames[c.b];
+        if (!fa || !fb) continue;
+        const card = document.createElement("div");
+        card.className = "pair-case-card";
+        const top = document.createElement("div");
+        top.className = "panel-heading";
+        top.innerHTML = "<strong style='font-size:12px;'>" + c.roster + " · 定性距 " + c.qual_dist + " / CNN距 " + c.cnn_dist +
+            "</strong><span class='note'>|ΔHP|差 " + c.dhp_gap + " · HP差 " + c.hp_margin_gap + "</span>";
+        const maps = document.createElement("div");
+        maps.className = "pair-case-maps";
+        for (const [tag, fIdx, f] of [["帧 A #" + c.a, c.a, fa], ["帧 B #" + c.b, c.b, fb]]) {
+            const box = document.createElement("div");
+            box.className = "pair-mini";
+            box.innerHTML = "<div class='pair-mini-title'><span>" + tag + " (" + f.layout + " 步" + f.step + ")</span>" +
+                "<span class='outcome-pill " + f.outcome + "'>" + (outcomeDisplay[f.outcome] ?? "—") + "</span></div>" +
+                "<div class='obs-card-sub'>HP差 " + signed(f.curr_hp_margin ?? 0) + " · ΔHP " + signed(f.hp_change ?? 0) + "</div>";
+            const mSvg = element("svg", { viewBox: "0 0 220 114" });
+            drawMiniBattlefield(mSvg, f, scene.bounds);
+            box.append(mSvg);
+            maps.append(box);
+        }
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.style.fontSize = "11.6px";
+        btn.style.minHeight = "26px";
+        btn.textContent = "在上方五空间高亮对比这对状态 (#" + c.a + " vs #" + c.b + ")";
+        btn.addEventListener("click", () => {
+            brushedFrames = new Set([c.a, c.b]);
+            galleryCollapsed = false;
+            syncSelectionStates();
+            chooseFrame(c.a);
+            get("roster-strip").scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+        card.append(top, maps, btn);
+        grid.append(card);
+    }
+}
+
 function drawUnits(frame) {
     const xDomain = scene.bounds.map(point => point[0]);
     const yDomain = scene.bounds.map(point => point[1]);
@@ -532,8 +1539,10 @@ function drawUnits(frame) {
         unitMap.append(mark);
     }));
 }
+
 function chooseFrame(index) {
     const frame = scene.frames[index];
+    if (!frame) return;
     const point = profiles.find(item => item.index === frame.point);
     if (!point || !point.windows.includes(index)) return;
     selectedFrame = index;
@@ -541,21 +1550,29 @@ function chooseFrame(index) {
     frameInput.replaceChildren();
     for (const value of point.windows) {
         const row = scene.frames[value];
-        option(frameInput, value, display[row.behavior] + " · " + row.layout + " / " + row.opponent.toUpperCase() + " · 步 " + row.step);
+        option(frameInput, value, "#" + value + " · " + display[row.behavior] + " · " + row.layout + " / " + row.opponent.toUpperCase() + " · 步 " + row.step);
     }
     frameInput.value = String(index);
-    get("case-text").textContent = display[frame.behavior] + " ｜ " + frame.layout + " / " + frame.opponent.toUpperCase() +
-        " ｜ 第 " + frame.step + " 步";
-    get("comparison-frame").textContent = "当前观测  " + get("case-text").textContent + " ｜ " + rosterLabel(point);
+    get("case-text").textContent = "#" + index + " ｜ " + display[frame.behavior] + " ｜ " + frame.layout + " / " + frame.opponent.toUpperCase() +
+        " ｜ 第 " + frame.step + " 步 ｜ " + rosterLabel(point) + " ｜ " + (outcomeDisplay[frame.outcome] ?? "—");
     get("paired").disabled = frame.paired === null;
     drawUnits(frame);
     const hp = units => units.reduce((total, unit) => total + unit[2], 0);
+    const signed = v => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1);
+    const geom = frame.geom;
+    const distLine = geom && geom.centroid_dist != null
+        ? "最近 " + geom.min_dist.toFixed(2) + " / 中位 " + geom.median_dist.toFixed(2) + " / 质心 " + geom.centroid_dist.toFixed(2)
+        : "—";
+    const finalHpStr = frame.final_hp ? frame.final_hp.join(" / ") : "—";
     const rows = [
         ["双方存活", frame.units.map(side => side.length).join(" 对 ")],
-        ["双方总 HP", frame.units.map(hp).join(" / ")],
-        ["射程内的跨队单位对", frame.reach.length + " / " + frame.units[0].length * frame.units[1].length],
-        ["上一窗口宏动作", frame.previous ?? "开局"],
-        ["本窗口分组与宏动作", frame.grouping + " / " + frame.macro],
+        ["双方总 HP（差值）", frame.units.map(hp).join(" / ") + "（" + signed(frame.curr_hp_margin ?? 0) + "）"],
+        ["跨队单位距离", distLine],
+        ["射程内跨队对数", frame.reach.length + " / " + frame.units[0].length * frame.units[1].length],
+        ["本窗单步奖励", "ΔHP " + signed(frame.hp_change ?? 0) + " · short_reward " + signed(frame.short_reward ?? 0)],
+        ["折扣回报与终局", "G_t " + signed(frame.disc_hp_return ?? 0) + " · 终局" + (outcomeDisplay[frame.outcome] ?? "—") + "（HP " + finalHpStr + "）"],
+        ["上一 / 本窗宏动作", (frame.previous ?? "开局") + " → " + frame.grouping + " / " + frame.macro],
+        ...(frame.im_hash ? [["势力图 IM 哈希", frame.im_hash]] : []),
     ];
     const meta = get("frame-meta");
     meta.replaceChildren();
@@ -565,90 +1582,223 @@ function chooseFrame(index) {
         dd.textContent = value;
         meta.append(dt, dd);
     }
-    activeMarks();
+    syncSelectionStates(false);
 }
 
-function tableRow(table, label, values) {
-    const row = document.createElement("tr"), title = document.createElement("th");
+function tableRow(table, label, cells, rowClass = "") {
+    const row = document.createElement("tr");
+    if (rowClass) row.className = rowClass;
+    const title = document.createElement("th");
     title.scope = "row";
     title.textContent = label;
     row.append(title);
-    for (const text of values) {
+    for (const item of cells) {
         const cell = document.createElement("td");
-        cell.textContent = text;
+        if (item && typeof item === "object") {
+            cell.textContent = item.text;
+            if (item.cls) cell.className = item.cls;
+        } else {
+            cell.textContent = item;
+        }
         row.append(cell);
     }
     table.append(row);
 }
 
+const fmtPct = v => v == null ? "—" : (100 * v).toFixed(1) + "%";
+const fmtNum = (v, d = 3) => v == null ? "—" : Number(v).toFixed(d);
+
 function agreementSummary() {
     const comparison = scene.comparison;
-    get("representations").hidden = get("comparison-link").hidden = !comparison;
+    get("representations").hidden = !comparison;
     if (!comparison) return;
-    const cnn = comparison.cnn;
-    const counts = cnn.sample_counts;
-    get("cnn-training").textContent = "按地图训练 · " + cnn.epochs + " 轮预算 · 验证最优第 " + cnn.best_epoch +
-        " 轮 · 训练 / 验证 / 留出窗口 " + [counts.train, counts.validation, counts.test].join(" / ");
-    get("cnn-distance-description").textContent = "标准化的 " + cnn.latent_dim + " 维嵌入使用欧氏距离";
+    const cnn = comparison.cnn, us = comparison.unit_set;
+    const parts = [];
+    if (cnn) parts.push("IM-CNN 最优第 " + cnn.best_epoch + "/" + cnn.epochs + " 轮");
+    if (us) parts.push("Unit-set 最优第 " + us.best_epoch + "/" + us.epochs + " 轮");
+    if (cnn?.sample_counts) {
+        const c = cnn.sample_counts;
+        parts.push("训练 / 验证 / 留出 " + [c.train, c.validation, c.test].join(" / ") + " 窗口");
+    }
+    get("cnn-training").textContent = "按场景同折训练 · " + parts.join(" · ");
     const stats = comparison.agreement[scopeInput.value];
-    const table = get("agreement-body"), roster = get("roster-body");
+    const table = get("agreement-body"), roster = get("roster-body"), rosterHead = get("roster-head");
     table.replaceChildren();
     roster.replaceChildren();
-    if (!stats) {
-        get("agreement-note").textContent = "当前范围的窗口不足以计算距离一致性。";
-        return;
-    }
-    const percent = value => value === null ? "—" : (100 * value).toFixed(1) + "%";
-    const coefficient = value => value === null ? "—" : value.toFixed(3);
+    rosterHead.replaceChildren();
+    if (!stats) { get("agreement-note").textContent = "当前范围窗口不足以计算距离一致性。"; return; }
     const within = stats.same_roster_anchors
-        ? " · 同阵容近邻统计 " + stats.same_roster_anchors + " 个窗口，随机基线 " + percent(stats.within_roster_random_overlap)
-        : " · 当前范围的同阵容样本不足以计算组内近邻重合";
-    get("agreement-note").textContent = stats.frames + " 个窗口 · " + stats.pairs.toLocaleString("zh-CN") +
-        " 个距离对 · " + stats.neighbors + "-NN 随机重合基线 " + percent(stats.random_overlap) + within;
-    for (const [method, label] of [["bk-position", "BK-tree 一级位置"], ["bk-health", "BK-tree 二级血量"]]) {
+        ? " · 同阵容统计 " + stats.same_roster_anchors + " 窗口，随机基线 " + fmtPct(stats.within_roster_random_overlap)
+        : "";
+    get("agreement-note").textContent = stats.frames + " 窗口 · " + stats.pairs.toLocaleString("zh-CN") +
+        " 距离对 · " + stats.neighbors + "-NN 随机重合 " + fmtPct(stats.random_overlap) + within;
+
+    for (const method of ["im-medoid", "unit-set", "bk-position", "bk-health", "bk-joint"]) {
         const row = stats.comparisons[method];
-        tableRow(table, label, [coefficient(row.spearman), percent(row.neighbor_overlap), percent(row.projected_overlap),
-            coefficient(row.same_roster_spearman), percent(row.same_roster_neighbor_overlap)]);
+        if (!row) continue;
+        tableRow(table, methodLabels[method] ?? method, [
+            fmtNum(row.spearman), fmtPct(row.neighbor_overlap), fmtPct(row.projected_overlap),
+            fmtNum(row.same_roster_spearman), fmtPct(row.same_roster_neighbor_overlap),
+        ]);
     }
     const rate = stats.roster_purity;
-    tableRow(roster, stats.neighbors + "-NN 同阵容率",
-        [rate.relation, rate.cnn, rate["bk-position"], rate["bk-health"], stats.roster_chance].map(percent));
+    const purityCols = ["relation", "relation-refined", "im-medoid", "unit-set", "cnn", "bk-position", "bk-health", "bk-joint"]
+        .filter(k => k in rate);
+    const th0 = document.createElement("th"); th0.scope = "col"; th0.textContent = "指标";
+    rosterHead.append(th0);
+    for (const k of purityCols) {
+        const th = document.createElement("th"); th.scope = "col"; th.textContent = methodLabels[k] ?? k;
+        rosterHead.append(th);
+    }
+    const thRand = document.createElement("th"); thRand.scope = "col"; thRand.textContent = "随机";
+    rosterHead.append(thRand);
+    tableRow(roster, stats.neighbors + "-NN 同阵容率", [...purityCols.map(k => rate[k]), stats.roster_chance].map(fmtPct));
+}
+
+function validitySummary() {
+    const val = scene.comparison?.validity?.[scopeInput.value];
+    const sec = get("validity"), link = get("validity-link");
+    sec.hidden = link.hidden = !val;
+    if (!val) return;
+
+    const availK = Object.keys(val.matched_k || {});
+    if (availK.length && !availK.includes(selectedK)) {
+        selectedK = availK.includes("32") ? "32" : availK[availK.length - 1];
+    }
+    const kHost = get("k-selector");
+    kHost.replaceChildren();
+    for (const k of availK) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "K = " + k + " 簇";
+        btn.setAttribute("aria-pressed", String(k === selectedK));
+        btn.addEventListener("click", () => { selectedK = k; validitySummary(); });
+        kHost.append(btn);
+    }
+    const col = val.collapsed_pairs;
+    get("validity-note").textContent = val.frames + " 个窗口 · " + val.episodes + " 个独立回合 · 零距离重合对：" +
+        col.pure_qualitative + "（纯定性）→ " + col.refined_qualitative + "（定性+单位间距）";
+
+    const kCnn = val.knn.cnn, kUs = val.knn["unit-set"], kIm = val.knn["im-medoid"], kJoint = val.knn["bk-joint"];
+    const hb = val.historical_bktree, oh = val.original_im_hash, mk = val.matched_k[selectedK];
+    const callout = get("validity-callout");
+    callout.replaceChildren();
+    const lines = [
+        "【跨回合 5-NN 全方法对比】终局胜负准确率：BK-tree 联合 " + fmtPct(kJoint?.win?.acc) +
+            (kUs ? " · Unit-set " + fmtPct(kUs.win.acc) : "") +
+            (kCnn ? " · IM-CNN " + fmtPct(kCnn.win.acc) : "") +
+            (kIm ? " · IM-medoid " + fmtPct(kIm.win.acc) : "") +
+            "；同动作 short_reward 5-NN R²：IM-CNN " + fmtNum(kCnn?.same_action_short_rew?.r2) +
+            (kUs ? " · Unit-set " + fmtNum(kUs.same_action_short_rew.r2) : "") +
+            (kJoint ? " · BK-joint " + fmtNum(kJoint.same_action_short_rew.r2) : "") + "。",
+        "【无约束碎片化 vs 受控码本 K=" + selectedK + "】" +
+            (oh ? "Original IM hash 产生 " + oh.k_eff + " 个精确哈希键（Hit% " + fmtPct(oh.cross_ep_hit_rate) + "）；" : "") +
+            "原版两级 BK-tree 拆出 " + hb.k_eff + " 簇（Hit% " + fmtPct(hb.cross_ep_hit_rate) + "）；" +
+            (mk ? "在受控 K=" + selectedK + " 下，各方法 Hit% 均升至 92%+，BK-joint 胜负 LOEO " + fmtPct(mk["bk-joint"]?.metrics?.win?.loeo_acc) +
+            (mk["unit-set"] ? "、Unit-set " + fmtPct(mk["unit-set"].metrics.win.loeo_acc) : "") +
+            (mk.cnn ? "、IM-CNN " + fmtPct(mk.cnn.metrics.win.loeo_acc) : "") +
+            (mk["im-medoid"] ? "、IM-medoid " + fmtPct(mk["im-medoid"].metrics.win.loeo_acc) : "") + "。" : ""),
+    ];
+    for (const text of lines) { const p = document.createElement("p"); p.textContent = text; callout.append(p); }
+
+    const knnBody = get("knn-validity-body");
+    knnBody.replaceChildren();
+    const knnOrder = ["relation", "relation-refined", "im-medoid", "unit-set", "cnn", "bk-position", "bk-health", "bk-joint"]
+        .filter(k => k in val.knn);
+    const knnExtractors = [
+        m => m.win.acc, m => m.win.r2, m => m.final_margin.r2, m => m.disc_hp_return.r2,
+        m => m.curr_margin.r2, m => m.same_action_hp_delta.r2, m => m.same_action_short_rew.r2, m => m.geom_centroid.r2,
+    ];
+    const knnBest = knnExtractors.map(fn => {
+        const vals = knnOrder.map(k => fn(val.knn[k])).filter(v => v != null && Number.isFinite(v));
+        return vals.length ? Math.max(...vals) : null;
+    });
+    for (const key of knnOrder) {
+        const m = val.knn[key];
+        const vals = knnExtractors.map(fn => fn(m));
+        const cells = vals.map((v, idx) => {
+            const text = idx === 0 ? fmtPct(v) : fmtNum(v);
+            const isBest = v != null && knnBest[idx] != null && Math.abs(v - knnBest[idx]) < 1e-6;
+            return { text, cls: isBest ? "cell-best" : "" };
+        });
+        tableRow(knnBody, methodLabels[key] ?? key, cells,
+            ["im-medoid", "unit-set", "cnn", "bk-joint"].includes(key) ? "row-highlight" : "");
+    }
+
+    const clusterBody = get("cluster-validity-body");
+    clusterBody.replaceChildren();
+    get("cluster-table-title").textContent = availK.length
+        ? "2. 离散聚类结果质量：等簇预算 K=" + selectedK + " k-medoids vs Original IM hash vs 原版两级 BK-tree (1.0/0.5)"
+        : "2. 离散聚类结果质量：无约束离散基线";
+    const clusterRows = [];
+    if (oh) clusterRows.push({ key: "orig-hash", label: "Original IM hash (精确哈希)", data: oh, unbounded: true });
+    if (mk) {
+        for (const key of ["im-medoid", "unit-set", "cnn", "bk-position", "bk-health", "bk-joint", "relation-refined"]) {
+            if (mk[key]) clusterRows.push({ key, label: methodLabels[key] + " (K=" + selectedK + ")", data: mk[key], unbounded: false });
+        }
+    }
+    clusterRows.push({ key: "hist", label: "原版两级 BK-tree (1.0/0.5)", data: hb, unbounded: true });
+    const fairRows = clusterRows.filter(r => !r.unbounded);
+    const bestOf = fn => {
+        const vals = fairRows.map(r => fn(r.data)).filter(v => v != null && Number.isFinite(v));
+        return vals.length ? Math.max(...vals) : null;
+    };
+    const bHit = bestOf(d => d.cross_ep_hit_rate), bSil = bestOf(d => d.silhouette), bNmi = bestOf(d => d.roster_nmi);
+    const bWinLoeo = bestOf(d => d.metrics.win.loeo_acc), bCurLoeo = bestOf(d => d.metrics.curr_margin.loeo_r2);
+    const bDiscLoeo = bestOf(d => d.metrics.disc_hp_return.loeo_r2), bActEta = bestOf(d => d.metrics.hp_delta.eta2);
+
+    for (const r of clusterRows) {
+        const d = r.data, m = d.metrics;
+        const eq = (a, b) => !r.unbounded && a != null && b != null && Math.abs(a - b) < 1e-6;
+        tableRow(clusterBody, r.label, [
+            { text: String(d.k_eff) + (r.key === "hist" ? " (L1=" + d.l1_clusters + ")" : ""), cls: r.unbounded && d.k_eff > val.frames * 0.4 ? "cell-warn" : "" },
+            { text: fmtPct(d.cross_ep_hit_rate), cls: r.unbounded && d.cross_ep_hit_rate < 0.65 ? "cell-warn" : (eq(d.cross_ep_hit_rate, bHit) ? "cell-best" : "") },
+            fmtNum(d.norm_entropy, 2),
+            { text: fmtNum(d.silhouette, 3), cls: eq(d.silhouette, bSil) ? "cell-best" : "" },
+            { text: fmtNum(d.roster_nmi, 2), cls: eq(d.roster_nmi, bNmi) ? "cell-best" : "" },
+            fmtNum(m.win.eta2, 3),
+            { text: fmtPct(m.win.loeo_acc), cls: r.unbounded && (m.win.loeo_acc ?? 1) < 0.5 ? "cell-warn" : (eq(m.win.loeo_acc, bWinLoeo) ? "cell-best" : "") },
+            { text: fmtNum(m.curr_margin.eta2, 3) + " / " + fmtNum(m.curr_margin.loeo_r2, 3), cls: eq(m.curr_margin.loeo_r2, bCurLoeo) ? "cell-best" : "" },
+            { text: fmtNum(m.disc_hp_return.eta2, 3) + " / " + fmtNum(m.disc_hp_return.loeo_r2, 3), cls: eq(m.disc_hp_return.loeo_r2, bDiscLoeo) ? "cell-best" : "" },
+            { text: fmtNum(m.hp_delta.eta2, 3), cls: eq(m.hp_delta.eta2, bActEta) ? "cell-best" : "" },
+        ], ["im-medoid", "unit-set", "cnn", "bk-joint", "orig-hash", "hist"].includes(r.key) ? "row-highlight" : "");
+    }
 }
 
 function matchSummary(stats) {
     const matched = stats.matched, meta = get("match-note"), table = get("match-table");
     table.replaceChildren();
-    if (!matched) {
-        meta.textContent = "当前时段没有可配对的开局与对手组合。";
-        return;
-    }
+    if (!matched) { meta.textContent = "当前时段没有可配对的开局与对手组合。"; return; }
     meta.textContent = matched.cases + " 个可配对组合 · 各条件 " + matched.windows + " 个窗口 · " +
         report.draws.toLocaleString("zh-CN") + " 次抽样";
-    const rows = [
-        ["固定脚本", matched.fixed], ["混合脚本", matched.mixed], ["固定及混合各约一半", matched.combined],
-        ["合并减固定", matched.combined_minus_fixed],
-    ];
-    for (const [label, result] of rows) {
+    for (const [label, result] of [
+        ["固定脚本", matched.fixed], ["混合脚本", matched.mixed],
+        ["固定及混合各约一半", matched.combined], ["合并减固定", matched.combined_minus_fixed],
+    ]) {
         tableRow(table, label, [result.mean.toFixed(2), result.p05 + " 至 " + result.p95]);
     }
 }
+
 function render(preferred) {
     scene = report.scenarios[sceneInput.value];
     selectedFrame = undefined;
+    brushedFrames.clear();
     const stats = scene.scopes[scopeInput.value];
     profiles = activeProfiles().filter(point => categoryInput.value === "all" || point.type === categoryInput.value);
-    get("subtitle").textContent = "固定与混合脚本的访问记录 · " + stats.fixed_windows + " 条固定窗口 / " +
+    get("subtitle").textContent = "固定与混合脚本访问记录 · " + stats.fixed_windows + " 条固定窗口 / " +
         stats.mixed_windows + " 条混合窗口";
     get("fixed-count").textContent = stats.fixed_only;
     get("mixed-count").textContent = stats.mixed_only;
     get("shared-count").textContent = stats.shared;
     get("union-count").textContent = stats.union;
+    renderSpaceToggles();
     agreementSummary();
+    renderSplitDiagnosis();
+    validitySummary();
     renderRosterOptions();
     redrawPlots();
     profileInput.replaceChildren();
     for (const point of profiles) option(profileInput, point.index, point.id + " · " + labels[point.type]);
-    get("scatter-note").textContent = "每点一种关系类型 · 当前显示 " + profiles.length + " / " + stats.union + " 种";
     profileInput.disabled = frameInput.disabled = get("download").disabled = !profiles.length;
     const chosen = preferred ?? scene.example;
     const contains = profiles.some(point => point.windows.includes(chosen));
@@ -660,34 +1810,204 @@ function render(preferred) {
         unitMap.replaceChildren();
         get("frame-meta").replaceChildren();
         get("case-text").textContent = "当前筛选没有观测。";
-        get("comparison-frame").textContent = "";
         get("paired").disabled = true;
     }
     matchSummary(stats);
 }
-function download() {
-    const columns = ["scenario", "scope", "profile", "type", "t_sne_1", "t_sne_2", "friendly_alive",
-        "enemy_alive", "fixed_windows", "mixed_windows", "relation_histogram"];
-    function csvCell(value) {
-        return '"' + String(value).replaceAll('"', '""') + '"';
-    }
-    const rows = profiles.map(point => [sceneInput.value, scopeInput.value, point.id, point.type, ...point.xy,
-        ...point.alive, point.fixedCount, point.mixedCount, JSON.stringify(Object.fromEntries(point.histogram))]);
+
+function exportCsv(onlyBrushed = false) {
+    const coords = scene.comparison?.coordinates || {};
+    const viewKeys = ["relation-refined", "im-medoid", "unit-set", "cnn", "bk-position", "bk-health", "bk-joint"]
+        .filter(k => k in coords);
+    const csvCell = value => '"' + String(value ?? "").replaceAll('"', '""') + '"';
+    const columns = ["scenario", "scope", "frame_index", "episode", "step", "behavior", "profile", "roster",
+        "outcome", "curr_hp_margin", "hp_change", "short_reward", "disc_hp_return", "centroid_dist", "im_hash",
+        ...viewKeys.flatMap(k => [k + "_x", k + "_y"])];
+    const frameIds = onlyBrushed ? sortedBrushedList() : profiles.flatMap(p => p.windows);
+    const rows = frameIds.map(i => {
+        const f = scene.frames[i], pt = scene.points[f.point];
+        return [sceneInput.value, scopeInput.value, i, f.episode, f.step, f.behavior, pt.id, pt.alive.join("v"),
+            f.outcome, f.curr_hp_margin, f.hp_change, f.short_reward, f.disc_hp_return,
+            f.geom?.centroid_dist ?? "", f.im_hash ?? "",
+            ...viewKeys.flatMap(k => coords[k][i] ?? ["", ""])];
+    });
     const content = [columns, ...rows].map(row => row.map(csvCell).join(",")).join("\r\n");
     const url = URL.createObjectURL(new Blob(["\uFEFF", content], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = "probe-profiles-" + sceneInput.value + "-" + scopeInput.value + ".csv";
+    link.download = (onlyBrushed ? "probe-brushed-" : "probe-multiview-") + sceneInput.value + "-" + scopeInput.value + ".csv";
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+async function exportTransparentStripPng() {
+    const refCard = get("strip-ref-slot").querySelector(".strip-card");
+    const quadCards = [...get("strip-quad-slot").querySelectorAll(".strip-card")];
+    const padX = 24, gap = 16, topH = 68, titleH = 22;
+    const refW = refCard ? 480 : 0, refH = 490;
+    const qW = 420, qH = 264;
+    const quadCols = quadCards.length > 2 ? 2 : quadCards.length ? 1 : 0;
+    const quadRows = quadCols ? Math.ceil(quadCards.length / quadCols) : 0;
+    const quadBlockW = quadCols ? quadCols * qW + (quadCols - 1) * gap : 0;
+    const quadBlockH = quadRows ? quadRows * (qH + titleH) + (quadRows - 1) * gap : 0;
+    const totalW = padX * 2 + refW + (refW && quadBlockW ? gap : 0) + quadBlockW;
+    const totalH = topH + Math.max(refCard ? refH + titleH : 0, quadBlockH) + 20;
+    const scale = 2;
+    const canvas = document.createElement("canvas");
+    canvas.width = totalW * scale; canvas.height = totalH * scale;
+    const ctx = canvas.getContext("2d");
+    ctx.scale(scale, scale);
+
+    const cs = getComputedStyle(document.documentElement);
+    const textCol = cs.getPropertyValue("--text").trim() || "#172332";
+    const mutedCol = cs.getPropertyValue("--muted").trim() || "#526173";
+    const gridCol = cs.getPropertyValue("--grid").trim() || "#e9edf3";
+    const borderCol = cs.getPropertyValue("--line").trim() || "#cdd6e1";
+
+    ctx.fillStyle = textCol;
+    ctx.font = '700 18px Inter, "Microsoft YaHei UI", sans-serif';
+    ctx.textAlign = "center";
+    ctx.fillText(get("strip-title").textContent, totalW / 2, 26);
+
+    const vars = ["--page", "--paper", "--text", "--muted", "--line", "--grid", "--fixed", "--mixed", "--shared", "--win", "--loss", "--draw", "--accent", "--accent-soft"];
+    const extraCss = ":root{" + vars.map(v => v + ":" + cs.getPropertyValue(v).trim()).join(";") + "}" +
+        ".axis-text{fill:" + mutedCol + ";font-size:11.5px;font-family:Inter,'Microsoft YaHei UI',sans-serif}" +
+        ".grid{stroke:" + gridCol + ";stroke-width:1}.plot-border{fill:none;stroke:" + borderCol + ";stroke-width:1}" +
+        ".hull-shape{fill-opacity:.11;stroke-opacity:.78;stroke-width:1.45}.has-brush .hull-shape{opacity:.32}" +
+        ".mark .disc{fill:currentColor;stroke:#ffffff;stroke-width:1px;opacity:.92}" +
+        ".mark.shared .disc{fill:none;stroke:currentColor;stroke-width:2.1px}" +
+        ".mark.fixed{color:" + cs.getPropertyValue("--fixed").trim() + "}" +
+        ".mark.mixed{color:" + cs.getPropertyValue("--mixed").trim() + "}" +
+        ".mark.shared{color:" + cs.getPropertyValue("--shared").trim() + "}" +
+        ".mark .focus-halo{fill:" + cs.getPropertyValue("--accent").trim() + ";opacity:0}" +
+        ".mark .focus-ring{fill:none;stroke:" + cs.getPropertyValue("--accent").trim() + ";opacity:0}" +
+        ".mark.active .focus-halo{opacity:.24}.mark.active .focus-ring{opacity:.95;stroke-width:1.55px;stroke-dasharray:3.2 2.2}" +
+        ".has-brush .mark.dimmed{opacity:.15}.has-brush .mark.brushed .focus-ring{opacity:.78;stroke-width:1.25px}";
+
+    const drawCardToCanvas = async (card, x0, y0, w, h) => {
+        const title = card.querySelector("h3")?.textContent || "";
+        const svg = card.querySelector("svg");
+        ctx.fillStyle = textCol;
+        ctx.font = '600 13.5px Inter, "Microsoft YaHei UI", sans-serif';
+        ctx.textAlign = "center";
+        ctx.fillText(title, x0 + w / 2, y0 + 14);
+        const clone = svg.cloneNode(true);
+        clone.setAttribute("xmlns", svgURI);
+        clone.setAttribute("width", String(w));
+        clone.setAttribute("height", String(h));
+        const st = document.createElementNS(svgURI, "style");
+        st.textContent = extraCss;
+        clone.prepend(st);
+        const xml = new XMLSerializer().serializeToString(clone);
+        const blobUrl = URL.createObjectURL(new Blob([xml], { type: "image/svg+xml;charset=utf-8" }));
+        await new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => { ctx.drawImage(img, x0, y0 + titleH, w, h); URL.revokeObjectURL(blobUrl); resolve(); };
+            img.onerror = err => { URL.revokeObjectURL(blobUrl); reject(err); };
+            img.src = blobUrl;
+        });
+    };
+
+    if (refCard) await drawCardToCanvas(refCard, padX, topH, refW, refH);
+    const qBaseX = padX + (refCard ? refW + gap : 0);
+    for (let i = 0; i < quadCards.length; i++) {
+        const col = i % quadCols, row = Math.floor(i / quadCols);
+        await drawCardToCanvas(quadCards[i], qBaseX + col * (qW + gap), topH + row * (qH + titleH + gap), qW, qH);
+    }
+    const link = document.createElement("a");
+    link.download = "state-rosters-" + sceneInput.value + "-interactive-transparent.png";
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+}
+
+// Synchronous CSS viewport module fullscreen (works reliably standalone, inside iframes & double-nested panels)
+const stripSection = get("roster-strip");
+const fsBtn = get("strip-fullscreen");
+function notifyParentFullscreen(active) {
+    if (window.parent !== window) {
+        try { window.parent.postMessage({ type: "wnc-module-fullscreen", active }, location.origin); } catch {}
+    }
+}
+function syncFullscreenBtn() {
+    const isFs = stripSection.classList.contains("module-fullscreen");
+    fsBtn.textContent = isFs ? "退出全屏" : "全屏显示";
+    fsBtn.setAttribute("aria-pressed", String(isFs));
+    document.body.style.overflow = isFs ? "hidden" : "";
+}
+function setStripFullscreen(active) {
+    stripSection.classList.toggle("module-fullscreen", active);
+    notifyParentFullscreen(active);
+    syncFullscreenBtn();
+}
+fsBtn.addEventListener("click", () => {
+    setStripFullscreen(!stripSection.classList.contains("module-fullscreen"));
+});
+
+// Per-module Copy Link buttons (with clipboard + execCommand fallback)
+function copyUrlText(url) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(url).catch(() => copyUrlFallback(url));
+    }
+    return Promise.resolve(copyUrlFallback(url));
+}
+function copyUrlFallback(url) {
+    const ta = document.createElement("textarea");
+    ta.value = url; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.append(ta); ta.select();
+    try { document.execCommand("copy"); } catch {}
+    ta.remove();
+}
+function buildSectionShareUrl(sectionId) {
+    const u = new URL(location.href);
+    u.searchParams.set("scene", sceneInput.value);
+    u.searchParams.set("scope", scopeInput.value);
+    u.searchParams.set("color", colorModeInput.value);
+    u.searchParams.set("envelope", envelopeModeInput.value);
+    u.hash = sectionId;
+    return u.href;
+}
+document.querySelectorAll(".copy-link-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+        const url = buildSectionShareUrl(btn.dataset.copySection || "");
+        await copyUrlText(url);
+        const prev = btn.dataset.origLabel || btn.textContent;
+        btn.dataset.origLabel = prev;
+        btn.textContent = "已复制 ✓";
+        setTimeout(() => { btn.textContent = prev; }, 1400);
+    });
+});
+
 for (const name of names) option(sceneInput, name, name);
+// Restore initial query params if opened from a copied module link
+const initParams = new URLSearchParams(location.search);
+if (names.includes(initParams.get("scene"))) sceneInput.value = initParams.get("scene");
+if (["all", "later", "test", "test-later"].includes(initParams.get("scope"))) scopeInput.value = initParams.get("scope");
+if (["source", "outcome", "curr-hp", "hp-delta"].includes(initParams.get("color"))) colorModeInput.value = initParams.get("color");
+if (["roster", "roster-core", "reward"].includes(initParams.get("envelope"))) envelopeModeInput.value = initParams.get("envelope");
+
 sceneInput.addEventListener("change", () => render());
 scopeInput.addEventListener("change", () => render(selectedFrame));
 categoryInput.addEventListener("change", () => render(selectedFrame));
+colorModeInput.addEventListener("change", redrawPlots);
+relationModeInput.addEventListener("change", redrawPlots);
+envelopeModeInput.addEventListener("change", () => { renderRosterOptions(); redrawPlots(); });
+get("diag-cohort").addEventListener("change", renderSplitDiagnosis);
+get("diag-metric").addEventListener("change", renderSplitDiagnosis);
 profileInput.addEventListener("change", () => chooseFrame(profiles.find(point => point.index === Number(profileInput.value)).windows[0]));
 frameInput.addEventListener("change", () => chooseFrame(Number(frameInput.value)));
+
+get("space-presets").addEventListener("click", event => {
+    const btn = event.target.closest("button[data-preset]");
+    if (!btn) return;
+    const avail = availableSpaceIds();
+    const p = btn.dataset.preset;
+    if (p === "classic3") activeSpaces = new Set(["relation", "cnn", "bk"].filter(k => avail.includes(k)));
+    else if (p === "all5") activeSpaces = new Set(avail);
+    else if (p === "encoders4") activeSpaces = new Set(["im-medoid", "unit-set", "cnn", "bk"].filter(k => avail.includes(k)));
+    renderSpaceToggles();
+    redrawPlots();
+});
+
 get("paired").addEventListener("click", () => {
     const target = scene.frames[selectedFrame].paired;
     if (!profiles.some(point => point.windows.includes(target))) {
@@ -697,10 +2017,46 @@ get("paired").addEventListener("click", () => {
         chooseFrame(target);
     }
 });
-get("download").addEventListener("click", download);
-hullToggle.addEventListener("change", () => { renderHullLegend(); redrawPlots(); });
-bkDistance.addEventListener("change", redrawPlots);
+
+get("brush-sort").addEventListener("change", renderBrushedGallery);
+get("gallery-toggle").addEventListener("click", () => { galleryCollapsed = !galleryCollapsed; renderBrushedGallery(); });
+get("brush-prev").addEventListener("click", () => {
+    const list = sortedBrushedList();
+    if (!list.length) return;
+    brushCursor = (brushCursor - 1 + list.length) % list.length;
+    chooseFrame(list[brushCursor]);
+});
+get("brush-next").addEventListener("click", () => {
+    const list = sortedBrushedList();
+    if (!list.length) return;
+    brushCursor = (brushCursor + 1) % list.length;
+    chooseFrame(list[brushCursor]);
+});
+get("brush-clear").addEventListener("click", () => { brushedFrames.clear(); syncSelectionStates(); });
+get("brush-export").addEventListener("click", () => exportCsv(true));
+get("download").addEventListener("click", () => exportCsv(false));
+get("export-png").addEventListener("click", () => { exportTransparentStripPng().catch(console.error); });
+
+window.addEventListener("keydown", event => {
+    if (event.key === "Escape") {
+        if (brushedFrames.size > 0) {
+            event.stopImmediatePropagation();
+            brushedFrames.clear();
+            syncSelectionStates();
+        } else if (stripSection.classList.contains("module-fullscreen")) {
+            event.stopImmediatePropagation();
+            setStripFullscreen(false);
+        }
+    }
+}, true);
+
 render();
+if (location.hash) {
+    requestAnimationFrame(() => {
+        const elTarget = document.querySelector(location.hash);
+        elTarget?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+}
 </script>
 </body>
 </html>

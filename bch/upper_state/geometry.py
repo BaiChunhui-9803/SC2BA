@@ -5,8 +5,9 @@ from scipy.spatial.distance import cdist
 
 
 def _directed_labels(distances, attackers, targets):
+    ranges = np.array([0.0 if unit.is_medivac else unit.attack_range for unit in attackers])[:, None]
     radii = np.array([unit.radius for unit in attackers])[:, None] + [unit.radius for unit in targets]
-    in_range = distances <= 5.0 + radii + 1e-6
+    in_range = (ranges > 0.0) & (distances <= ranges + radii + 1e-6)
     near = np.isclose(distances, distances.min(axis=1, keepdims=True), atol=1e-6, rtol=0)
     far = np.isclose(distances, distances.max(axis=1, keepdims=True), atol=1e-6, rtol=0)
     return in_range.astype(np.uint8) | (near.astype(np.uint8) << 1) | (far.astype(np.uint8) << 2)

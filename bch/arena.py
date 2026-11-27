@@ -18,7 +18,19 @@ from sc2ba.env.starcraft2.maps import get_map_params
 from .observation import Observation, Unit
 
 OPPONENTS = {"bot": 0, **{name: code for name, code in enemy_name.items() if code}}
-ABILITIES = {"smart": 1, "attack": 3674, "move": 3794}
+ABILITIES = {"smart": 1, "attack": 3674, "move": 3794, "heal": 386}
+# Standard SC2 weapon ranges by StarCraft2BAEnv.get_unit_type_id()
+UNIT_ATTACK_RANGE = {
+    1: 5.0,  # marine
+    2: 6.0,  # marauder
+    3: 4.0,  # medivac (heal range, non-combat)
+    4: 6.0,  # stalker
+    5: 0.5,  # zealot (melee)
+    6: 6.0,  # colossus
+    7: 0.5,  # zergling
+    8: 5.0,  # hydralisk
+    9: 0.5,  # baneling
+}
 
 
 class _MixedActions:
@@ -46,8 +58,6 @@ class _MixedActions:
 class Arena(StarCraft2BAEnv):
     def __init__(self, scenario, seed, *, step_mul=8):
         params = get_map_params(scenario.name)
-        if set(params["red_units"]) != {"marine"} or set(params["blue_units"]) != {"marine"}:
-            raise ValueError(f"{scenario.name} must use only Marines for the original HRL-IM/CBS rules.")
         allowed_ids = params.get("blue_control_models", [0])
         for opponent in scenario.opponents:
             if OPPONENTS.get(opponent) not in allowed_ids:
@@ -58,12 +68,16 @@ class Arena(StarCraft2BAEnv):
             self._validate_layout(layout, params)
         if not flags.FLAGS.is_parsed():
             flags.FLAGS(["bch"])
-        players = [Agent("T", Camp.RED.name), Bot("T", Camp.BLUE.name, difficulties["7"])]
+        players = [
+            Agent(params["a_race"], Camp.RED.name),
+            Bot(params["b_race"], Camp.BLUE.name, difficulties["7"]),
+        ]
         use_models = any(OPPONENTS[name] for name in scenario.opponents)
         super().__init__(map_name=scenario.name, players=players, seed=seed, step_mul=step_mul,
                          random_enemy=use_models, window_size_x=320, window_size_y=240)
         self.default_blue = self.blue_start_position
         self.default_mirror = self.mirror_create_blue_camp
+        self.default_blue_units = dict(params["blue_units"])
         self.initial_scale = 16 * max(self.n_red_agents, self.n_blue_agents)
         self.layout = None
         self._raw_step = False
@@ -118,8 +132,8 @@ class Arena(StarCraft2BAEnv):
         self.red_start_position = layout.red or self.red_start_position
         self.blue_start_position = layout.blue or self.default_blue
         self.mirror_create_blue_camp = self.default_mirror and layout.blue is None
-        # Match the declared roster even on stock maps whose mirrored spawn ignores this field.
-        self.blue_units_config = {"marine": self.n_blue_agents}
+        # Restore the declared blue roster (fixes stock maps whose mirrored spawn ignores blue_units).
+        self.blue_units_config = dict(self.default_blue_units)
         restarts = self.force_restarts
         with redirect_stdout(StringIO()):
             super().reset()
@@ -129,15 +143,40 @@ class Arena(StarCraft2BAEnv):
         if self.last_end_loop is not None and observation.game_loop <= self.last_end_loop:
             raise RuntimeError("SC2 loaded a fresh game instead of reusing the current map.")
         for side, count in ((observation.friendly, self.n_red_agents), (observation.enemy, self.n_blue_agents)):
-            if len(side) != count or any(unit.health_max <= 0 or unit.health != unit.health_max for unit in side):
+            if len(side) != count or any(
+                unit.health_max <= 0
+                or unit.health != unit.health_max
+                or (unit.shield_max > 0 and unit.shield != unit.shield_max)
+                for unit in side
+            ):
                 raise RuntimeError(f"Bad initial roster or HP for {self.map_name}/{layout.id}.")
         return observation
 
     def observe_battle(self):
         def read_side(side):
-            return tuple(Unit(int(unit.tag), float(unit.pos.x), float(unit.pos.y), float(unit.health),
-                              float(unit.health_max), float(unit.radius), float(unit.weapon_cooldown))
-                         for unit in sorted(side.values(), key=lambda item: item.tag) if unit.health > 0)
+            result = []
+            for unit in sorted(side.values(), key=lambda item: item.tag):
+                if unit.health <= 0:
+                    continue
+                utype = self.get_unit_type_id(unit) or 1
+                result.append(
+                    Unit(
+                        int(unit.tag),
+                        float(unit.pos.x),
+                        float(unit.pos.y),
+                        float(unit.health),
+                        float(unit.health_max),
+                        float(unit.radius),
+                        float(unit.weapon_cooldown),
+                        shield=float(getattr(unit, "shield", 0.0)),
+                        shield_max=float(getattr(unit, "shield_max", 0.0)),
+                        unit_type=int(utype),
+                        attack_range=float(UNIT_ATTACK_RANGE.get(utype, 5.0)),
+                        is_medivac=(utype == 3),
+                        energy=float(getattr(unit, "energy", 0.0)),
+                    )
+                )
+            return tuple(result)
         return Observation(read_side(self.agents), read_side(self.enemies), self.episode_steps,
                            int(self._obs.observation.game_loop), self.map_y, self.initial_scale)
 
@@ -162,10 +201,23 @@ class Arena(StarCraft2BAEnv):
             raw_command.target_world_space_pos.CopyFrom(common.Point2D(x=x, y=y))
         return sc.Action(action_raw=raw.ActionRaw(unit_command=raw_command))
 
+    def _macro_actions(self, commands):
+        # Reissuing an active heal to the same target returns AlreadyTargeted.
+        active_heals = {
+            (unit.tag, unit.orders[0].target_unit_tag)
+            for unit in self.agents.values()
+            if unit.health > 0 and unit.orders and unit.orders[0].ability_id == ABILITIES["heal"]
+        }
+        return [
+            self._raw_action(command) for command in commands
+            if command.ability != "heal"
+            or not all((tag, command.target) in active_heals for tag in command.units)
+        ]
+
     @torch.inference_mode()
     def step_macros(self, commands):
         controller = self._controller
-        proxy = _MixedActions(controller, [self._raw_action(command) for command in commands])
+        proxy = _MixedActions(controller, self._macro_actions(commands))
         self._controller = proxy
         self._raw_step = True
         try:
@@ -178,7 +230,14 @@ class Arena(StarCraft2BAEnv):
         if "dead_red" not in info:
             raise RuntimeError("SC2BA did not return a normal step after the macro.")
         observation = self.observe_battle()
-        if done and observation.friendly and observation.enemy and observation.step != self.episode_limit:
+        medivac_end = self.only_medivac_left(ally=True) or self.only_medivac_left(ally=False)
+        if (
+            done
+            and observation.friendly
+            and observation.enemy
+            and observation.step != self.episode_limit
+            and not medivac_end
+        ):
             raise RuntimeError("Unexpected SC2BA terminal state.")
         if done:
             self.last_end_loop = observation.game_loop
@@ -190,7 +249,7 @@ class Arena(StarCraft2BAEnv):
         return {
             "outcome": outcome, "steps": final.step, "step_limit": self.episode_limit,
             "final_game_loop": final.game_loop,
-            "initial": first.record(), "final_hp": [sum(unit.health for unit in side)
+            "initial": first.record(), "final_hp": [sum(unit.effective_health for unit in side)
                                                      for side in (final.friendly, final.enemy)],
             "engine_pid": self._sc2_proc.pid, "engine_launches": self.launches,
             "engine_restarts": self.force_restarts, "sc2_build": self._run_config.version.build_version,

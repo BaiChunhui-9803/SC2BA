@@ -1,0 +1,152 @@
+{
+  "protocol": "bch-sc2ba-v10-all13",
+  "behaviors": {
+    "mixed": null,
+    "legacy-nearest": ["action_ATK_clu_nearest"]
+  },
+  "scenarios": [
+    {
+      "name": "3m",
+      "category": "symmetric",
+      "opponents": ["bot", "qmix", "vdn", "dop", "fop", "qplex", "coma", "iql", "qtran"],
+      "layouts": [
+        {"id": "standard", "split": "train", "red": [9, 16]},
+        {"id": "offset", "split": "train", "red": [10, 19], "blue": [23, 14]},
+        {"id": "diagonal", "split": "validation", "red": [9, 12], "blue": [23, 20]},
+        {"id": "near", "split": "test", "red": [11, 14], "blue": [21, 18]}
+      ]
+    },
+    {
+      "name": "8m",
+      "category": "symmetric",
+      "opponents": ["bot", "qmix", "vdn", "dop", "fop", "qplex", "coma", "iql", "qtran"],
+      "layouts": [
+        {"id": "standard", "split": "train", "red": [9, 16]},
+        {"id": "offset", "split": "train", "red": [10, 19], "blue": [23, 14]},
+        {"id": "diagonal", "split": "validation", "red": [9, 12], "blue": [23, 20]},
+        {"id": "near", "split": "test", "red": [11, 14], "blue": [21, 18]}
+      ]
+    },
+    {
+      "name": "25m",
+      "category": "symmetric",
+      "opponents": ["bot", "qmix", "vdn", "dop", "fop", "qplex", "coma", "iql", "qtran"],
+      "layouts": [
+        {"id": "standard", "split": "train", "red": [9, 16]},
+        {"id": "offset", "split": "train", "red": [10, 18], "blue": [23, 14]},
+        {"id": "diagonal", "split": "validation", "red": [9, 13], "blue": [23, 19]},
+        {"id": "near", "split": "test", "red": [11, 15], "blue": [21, 17]}
+      ]
+    },
+    {
+      "name": "2s3z",
+      "category": "symmetric",
+      "opponents": ["bot", "qmix", "vdn", "dop", "fop", "qplex", "coma", "iql", "qtran"],
+      "layouts": [
+        {"id": "standard", "split": "train", "red": [9, 16]},
+        {"id": "offset", "split": "train", "red": [10, 19], "blue": [23, 14]},
+        {"id": "diagonal", "split": "validation", "red": [9, 12], "blue": [23, 20]},
+        {"id": "near", "split": "test", "red": [11, 14], "blue": [21, 18]}
+      ]
+    },
+    {
+      "name": "3s5z",
+      "category": "symmetric",
+      "opponents": ["bot", "qmix", "vdn", "dop", "fop", "qplex", "coma", "iql", "qtran"],
+      "layouts": [
+        {"id": "standard", "split": "train", "red": [9, 16]},
+        {"id": "offset", "split": "train", "red": [10, 19], "blue": [23, 14]},
+        {"id": "diagonal", "split": "validation", "red": [9, 12], "blue": [23, 20]},
+        {"id": "near", "split": "test", "red": [11, 14], "blue": [21, 18]}
+      ]
+    },
+    {
+      "name": "1c3s5z",
+      "category": "symmetric",
+      "opponents": ["bot", "qmix", "vdn", "dop", "fop", "qplex", "coma", "iql", "qtran"],
+      "layouts": [
+        {"id": "standard", "split": "train", "red": [9, 16]},
+        {"id": "offset", "split": "train", "red": [10, 19], "blue": [23, 14]},
+        {"id": "diagonal", "split": "validation", "red": [9, 12], "blue": [23, 20]},
+        {"id": "near", "split": "test", "red": [11, 14], "blue": [21, 18]}
+      ]
+    },
+    {
+      "name": "MMM",
+      "category": "symmetric",
+      "opponents": ["bot", "qmix", "vdn", "dop", "fop", "qplex", "coma", "iql", "qtran"],
+      "layouts": [
+        {"id": "standard", "split": "train", "red": [9, 16]},
+        {"id": "offset", "split": "train", "red": [10, 19], "blue": [23, 14]},
+        {"id": "diagonal", "split": "validation", "red": [9, 12], "blue": [23, 20]},
+        {"id": "near", "split": "test", "red": [11, 14], "blue": [21, 18]}
+      ]
+    },
+    {
+      "name": "5m_vs_6m",
+      "category": "asymmetric",
+      "opponents": ["bot", "qmix", "vdn", "dop", "fop", "qplex", "coma", "iql", "qtran"],
+      "layouts": [
+        {"id": "standard", "split": "train", "red": [9, 16]},
+        {"id": "offset", "split": "train", "red": [10, 19], "blue": [23, 14]},
+        {"id": "diagonal", "split": "validation", "red": [9, 12], "blue": [23, 20]},
+        {"id": "near", "split": "test", "red": [11, 14], "blue": [21, 18]}
+      ]
+    },
+    {
+      "name": "10m_vs_11m",
+      "category": "asymmetric",
+      "opponents": ["bot", "qmix", "vdn", "dop", "fop", "qplex", "coma", "iql", "qtran"],
+      "layouts": [
+        {"id": "standard", "split": "train", "red": [9, 16]},
+        {"id": "offset", "split": "train", "red": [10, 19], "blue": [23, 14]},
+        {"id": "diagonal", "split": "validation", "red": [9, 12], "blue": [23, 20]},
+        {"id": "near", "split": "test", "red": [11, 14], "blue": [21, 18]}
+      ]
+    },
+    {
+      "name": "MMM2",
+      "category": "asymmetric",
+      "opponents": ["bot", "qmix", "vdn", "dop", "fop", "qplex", "coma", "iql", "qtran"],
+      "layouts": [
+        {"id": "standard", "split": "train", "red": [9, 16]},
+        {"id": "offset", "split": "train", "red": [10, 19], "blue": [23, 14]},
+        {"id": "diagonal", "split": "validation", "red": [9, 12], "blue": [23, 20]},
+        {"id": "near", "split": "test", "red": [11, 14], "blue": [21, 18]}
+      ]
+    },
+    {
+      "name": "3s5z_vs_3s6z",
+      "category": "newly_registered",
+      "opponents": ["bot", "qmix", "vdn", "dop", "fop", "qplex", "coma", "iql", "qtran"],
+      "layouts": [
+        {"id": "standard", "split": "train", "red": [9, 16]},
+        {"id": "offset", "split": "train", "red": [10, 19], "blue": [23, 14]},
+        {"id": "diagonal", "split": "validation", "red": [9, 12], "blue": [23, 20]},
+        {"id": "near", "split": "test", "red": [11, 14], "blue": [21, 18]}
+      ]
+    },
+    {
+      "name": "3z_vs_3s",
+      "category": "newly_registered",
+      "opponents": ["bot", "qmix", "vdn", "dop", "fop", "qplex", "coma", "iql", "qtran"],
+      "layouts": [
+        {"id": "standard", "split": "train", "red": [9, 16]},
+        {"id": "offset", "split": "train", "red": [10, 19], "blue": [23, 14]},
+        {"id": "diagonal", "split": "validation", "red": [9, 12], "blue": [23, 20]},
+        {"id": "near", "split": "test", "red": [11, 14], "blue": [21, 18]}
+      ]
+    },
+    {
+      "name": "5z_vs_3s",
+      "category": "newly_registered",
+      "opponents": ["bot", "qmix", "vdn", "dop", "fop", "qplex", "coma", "iql", "qtran"],
+      "layouts": [
+        {"id": "standard", "split": "train", "red": [9, 16]},
+        {"id": "offset", "split": "train", "red": [10, 19], "blue": [23, 14]},
+        {"id": "diagonal", "split": "validation", "red": [9, 12], "blue": [23, 20]},
+        {"id": "near", "split": "test", "red": [11, 14], "blue": [21, 18]}
+      ]
+    }
+  ]
+}

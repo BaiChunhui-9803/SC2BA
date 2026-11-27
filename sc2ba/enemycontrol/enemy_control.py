@@ -2,7 +2,7 @@ import copy
 import os
 
 import yaml
-import collections
+from collections.abc import Mapping
 import torch as th
 
 from sc2ba.enemycontrol.controllers import REGISTRY as mac_REGISTRY
@@ -26,7 +26,7 @@ enemy_name = {
 
 def recursive_dict_update(d, u):
     for k, v in u.items():
-        if isinstance(v, collections.Mapping):
+        if isinstance(v, Mapping):
             d[k] = recursive_dict_update(d.get(k, {}), v)
         else:
             d[k] = v

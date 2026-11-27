@@ -95,8 +95,13 @@ def _fit_neural(args, observations, cases, folds, candidate_ids):
         for start in range(0, len(ids), args.batch_size):
             yield ids[start:start + args.batch_size]
 
+    # Every epoch sees the same position-derived grid. Cache it on CPU and
+    # transfer only each minibatch, leaving the deployed encoder unchanged.
+    grid_cache = model_inputs("im-grid", observations)[0] if args.method == "im-grid" else None
+
     def embed(ids):
-        inputs = model_inputs(args.method, [observations[index] for index in ids])
+        inputs = ((grid_cache[ids],) if grid_cache is not None
+                  else model_inputs(args.method, [observations[index] for index in ids]))
         return model(*(tensor.to(device) for tensor in inputs))
 
     def predict(ids):
@@ -145,26 +150,65 @@ def _fit_neural(args, observations, cases, folds, candidate_ids):
     return features, model_data, metrics
 
 
+def _hash_probe_features(observations, ids, render):
+    return np.stack([hash_features(render(influence_window(observations[index]),
+                                         observations[index].influence_scale)) for index in ids])
+
+
+def _hash_probe_metrics(observations, cases, ids, features, test, medoids, render):
+    # Decode a code from its training examples. This diagnostic cannot affect the medoids.
+    code = np.count_nonzero(features[:, None, :] != medoids[None, :, :], axis=2).argmin(axis=1)
+    test_features = _hash_probe_features(observations, test, render)
+    test_code = np.count_nonzero(test_features[:, None, :] != medoids[None, :, :], axis=2).argmin(axis=1)
+    train_geometry = np.stack([geometry_target(observations[index]) for index in ids])
+    test_geometry = np.stack([geometry_target(observations[index]) for index in test])
+    geometry_by_code = np.stack([np.median(train_geometry[code == k], axis=0) for k in range(len(medoids))])
+
+    hp_by_code, hp_by_condition = defaultdict(list), defaultdict(list)
+    def condition(k, row):
+        return (k, row["grouping"], row["macro"], row["opponent"])
+    for k, index in zip(code, ids):
+        row = cases[index]
+        hp_by_code[k].append(row["hp_change"])
+        hp_by_condition[condition(k, row)].append(row["hp_change"])
+    hp_by_code = {key: np.median(values) for key, values in hp_by_code.items()}
+    hp_by_condition = {key: np.median(values) for key, values in hp_by_condition.items()}
+    test_hp_errors = [
+        abs(hp_by_condition.get(condition(k, cases[index]), hp_by_code[k]) - cases[index]["hp_change"])
+        for k, index in zip(test_code, test)
+    ]
+    return {
+        "test_geometry_mae": float(np.abs(geometry_by_code[test_code] - test_geometry).mean()),
+        "test_hp_mae": float(np.mean(test_hp_errors)),
+        "test_mae_readout": "train_code_and_condition_medians",
+    }
+
+
 def fit(args):
     started = perf_counter()
     probes, observations, cases, folds = _read_probes(args.probes, args.scenario, args.behavior)
     ids = _candidates(cases, folds["train"], args.codebook_samples, args.seed)
     if args.method == "im-medoid":
         render = HistogramHash()
-        features = np.stack([hash_features(render(influence_window(observations[index]),
-                                                  observations[index].influence_scale)) for index in ids])
+        features = _hash_probe_features(observations, ids, render)
         model, metrics, metric = {}, {}, "hamming"
     else:
         features, model, metrics = _fit_neural(args, observations, cases, folds, ids)
         metric = "euclidean"
     medoids, cost = fit_medoids(features, args.codes, metric, args.seed)
+    if args.method == "im-medoid":
+        metrics = _hash_probe_metrics(observations, cases, ids, features, folds["test"], medoids, render)
+    else:
+        metrics["test_mae_readout"] = "frozen_neural_supervision_heads"
     manifest = {
         "probes_sha256": probes["probes_sha256"], "plan_sha256": probes["plan_sha256"],
         "step_mul": probes["step_mul"], "horizon": probes["horizon"], "seed": args.seed, "scenario": args.scenario,
         "behaviors": dict(Counter(row["behavior"] for row in cases)),
         "method": args.method, "codes": args.codes, "latent_dim": args.latent_dim, "epochs": args.epochs,
+        "fit_device": "cpu" if args.method == "im-medoid" else args.device,
         "sample_counts": {split: len(ids) for split, ids in folds.items()}, "codebook_samples": len(ids),
         "fold_episodes": {split: len(Counter(cases[index]["episode"] for index in ids)) for split, ids in folds.items()},
+        "unique_codebook_inputs": len(np.unique(features, axis=0)),
         "medoid_cost": cost, "seconds": perf_counter() - started, **metrics,
     }
     args.output.mkdir(parents=True, exist_ok=False)

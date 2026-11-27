@@ -1,18 +1,27 @@
 """The original HRL-IM/CBS short-term reward for lower Q updates."""
 
+import numpy as np
 from scipy.spatial.distance import cdist
 
 
 def _health_ratio(units):
-    return sum(int(unit.health / unit.health_max * 255) for unit in units)
+    return sum(int(unit.effective_health / unit.effective_health_max * 255) for unit in units)
 
 
 def _coverage(observation):
     if not observation.friendly or not observation.enemy:
         return 0, 0
     distance = cdist([unit.xy for unit in observation.friendly], [unit.xy for unit in observation.enemy])
-    reaches = distance < 5.0
-    return int(reaches.sum(axis=0).max()), int(reaches.sum(axis=1).max())
+    own_ranges = np.array([0.0 if unit.is_medivac else unit.attack_range for unit in observation.friendly])[:, None]
+    enemy_ranges = np.array([0.0 if unit.is_medivac else unit.attack_range for unit in observation.enemy])[None, :]
+    radii = np.array([unit.radius for unit in observation.friendly])[:, None] + np.array(
+        [unit.radius for unit in observation.enemy]
+    )[None, :]
+    own_thresh = np.where(own_ranges < 2.0, own_ranges + radii, own_ranges)
+    enemy_thresh = np.where(enemy_ranges < 2.0, enemy_ranges + radii, enemy_ranges)
+    own_reaches = (own_ranges > 0.0) & (distance < own_thresh)
+    enemy_reaches = (enemy_ranges > 0.0) & (distance < enemy_thresh)
+    return int(own_reaches.sum(axis=0).max()), int(enemy_reaches.sum(axis=1).max())
 
 
 def short_reward(before, after):

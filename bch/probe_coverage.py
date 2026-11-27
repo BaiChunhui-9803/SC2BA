@@ -4,6 +4,7 @@ import argparse
 from collections import Counter, defaultdict
 import csv
 import gzip
+import inspect
 import json
 from math import ceil, floor
 from pathlib import Path
@@ -34,7 +35,14 @@ def _archive(path):
                 scenes[row["scenario"]].append(row)
     if not scenes:
         raise ValueError("The archive has no fixed or mixed probe windows.")
-    return manifest, scenes
+    episodes = {}
+    ep_file = path / "episodes.jsonl"
+    if ep_file.exists():
+        with ep_file.open(encoding="utf-8") as stream:
+            for line in stream:
+                row = json.loads(line)
+                episodes[row["episode"]] = row
+    return manifest, scenes, episodes
 
 
 def _case(frame):
@@ -82,10 +90,13 @@ def _project(signatures, seed):
     if len(features) < 3:
         raise ValueError("At least three distinct relation profiles are required per scenario.")
     perplexity = min(20.0, len(features) / 4)
-    coordinates = TSNE(
+    kwargs = dict(
         n_components=2, perplexity=perplexity, random_state=seed,
-        init="pca", learning_rate="auto", n_iter=1500, method="exact",
-    ).fit_transform(features)
+        init="pca", learning_rate="auto", method="exact",
+    )
+    iter_param = "max_iter" if "max_iter" in inspect.signature(TSNE.__init__).parameters else "n_iter"
+    kwargs[iter_param] = 1500
+    coordinates = TSNE(**kwargs).fit_transform(features)
     return coordinates.round(5).tolist(), perplexity
 
 
@@ -108,7 +119,6 @@ def _matched_coverage(frames, trials, seed):
         for fixed, mixed, quota in paired:
             f = rng.choice(fixed, quota, replace=False)
             m = rng.choice(mixed, quota, replace=False)
-            # When a case has an odd quota, alternate which behavior gets the extra draw in expectation.
             n_fixed = quota // 2 + int(quota % 2 and rng.integers(2))
             fixed_covered.update(f)
             mixed_covered.update(m)
@@ -160,14 +170,22 @@ def _example(frames, points):
     return max(candidates)[-1] if candidates else 0
 
 
-def _scene_report(name, rows, trials, seed, encoder=None):
+def _scene_report(name, rows, episodes, trials, seed, encoder=None, unit_set_encoder=None, im_medoid_encoder=None):
+    from .probe_projections import compare_projections, compute_rl_targets
+
     frames, signatures, observations = _frames(rows)
+    targets = compute_rl_targets(rows, observations, episodes)
     types = sorted(set(signatures))
     type_to_id = {signature: index for index, signature in enumerate(types)}
     members = defaultdict(list)
     xy, perplexity = _project(types, seed)
     for index, (signature, frame) in enumerate(zip(signatures, frames)):
         frame["point"] = type_to_id[signature]
+        frame["outcome"] = targets["outcomes"][index]
+        frame["final_hp"] = targets["final_hp_pairs"][index]
+        frame["curr_hp_margin"] = round(float(targets["curr_margin"][index]), 2)
+        frame["disc_hp_return"] = round(float(targets["disc_hp_return"][index]), 2)
+        frame["short_reward"] = round(float(targets["short_rew"][index]), 2)
         members[frame["point"]].append(index)
     points = [{
         "id": f"{name}-{index + 1:03d}", "xy": xy[index], "alive": list(signature[:2]),
@@ -186,11 +204,18 @@ def _scene_report(name, rows, trials, seed, encoder=None):
     }
     distances = {}
     if encoder:
-        from .probe_projections import compare_projections
-
-        scene["comparison"], distances = compare_projections(
-            encoder, observations, _relation_features(signatures), [item[:2] for item in signatures], scopes, seed,
+        comparison, distances = compare_projections(
+            encoder, observations, _relation_features(signatures),
+            [item[:2] for item in signatures], scopes, seed, targets=targets,
+            unit_set_encoder=unit_set_encoder, im_medoid_encoder=im_medoid_encoder,
         )
+        geom_summaries = comparison.pop("geom_summaries", [])
+        im_hashes = comparison.pop("im_hashes", [])
+        for frame, geom in zip(frames, geom_summaries):
+            frame["geom"] = geom
+        for frame, h in zip(frames, im_hashes):
+            frame["im_hash"] = h
+        scene["comparison"] = comparison
     return scene, distances
 
 
@@ -226,30 +251,46 @@ def _write_tables(output, report):
 def _write_projections(output, report, matrices):
     from .probe_projections import VIEW_NAMES
 
-    summary = {name: {key: scene["comparison"][key] for key in ("perplexity", "cnn", "agreement")}
-               for name, scene in report["scenarios"].items()}
+    first_scene = next(iter(report["scenarios"].values()))
+    active_views = [name for name in VIEW_NAMES if name in first_scene["comparison"]["coordinates"]]
+
+    summary = {
+        name: {key: scene["comparison"].get(key)
+               for key in ("perplexity", "refined_weight", "cnn", "unit_set", "im_medoid", "agreement")}
+        for name, scene in report["scenarios"].items()
+    }
     write_json(output / "representation-summary.json", {
         "probe_sha256": report["probe_sha256"], "projection_seed": report["seed"], "scenarios": summary,
+    })
+    validity_summary = {name: scene["comparison"].get("validity", {}) for name, scene in report["scenarios"].items()}
+    write_json(output / "clustering-validity.json", {
+        "probe_sha256": report["probe_sha256"],
+        "projection_seed": report["seed"],
+        "scenarios": validity_summary,
     })
     np.savez_compressed(output / "representation-distances.npz", **matrices)
     with (output / "representation-frames.csv").open("w", newline="", encoding="utf-8-sig") as stream:
         writer = csv.writer(stream)
         writer.writerow(("scenario", "frame_index", "episode", "step", "split", "behavior", "profile", "roster",
-                         "relation_x", "relation_y", *(f"{method}_{axis}" for method in VIEW_NAMES for axis in ("x", "y"))))
+                         "outcome", "curr_hp_margin", "hp_change", "short_reward", "disc_hp_return", "im_hash",
+                         "relation_x", "relation_y", *(f"{method}_{axis}" for method in active_views for axis in ("x", "y"))))
         for name, scene in report["scenarios"].items():
             coordinates = scene["comparison"]["coordinates"]
             for index, frame in enumerate(scene["frames"]):
                 profile = scene["points"][frame["point"]]
                 writer.writerow((name, index, frame["episode"], frame["step"], frame["split"], frame["behavior"],
-                                 profile["id"], "v".join(map(str, profile["alive"])), *profile["xy"],
-                                 *(value for method in VIEW_NAMES for value in coordinates[method][index])))
+                                 profile["id"], "v".join(map(str, profile["alive"])),
+                                 frame.get("outcome", ""), frame.get("curr_hp_margin", ""),
+                                 frame.get("hp_change", ""), frame.get("short_reward", ""),
+                                 frame.get("disc_hp_return", ""), frame.get("im_hash", ""), *profile["xy"],
+                                 *(value for method in active_views for value in coordinates[method][index])))
     with (output / "representation-agreement.csv").open("w", newline="", encoding="utf-8-sig") as stream:
         writer = csv.writer(stream)
         base = ("frames", "pairs", "neighbors", "random_overlap", "same_roster_pairs", "same_roster_anchors",
                 "within_roster_random_overlap", "roster_chance")
         agreement = ("spearman", "neighbor_overlap", "projected_overlap", "same_roster_spearman",
                      "same_roster_neighbor_overlap")
-        purity = ("relation", *VIEW_NAMES)
+        purity = ("relation", *active_views)
         writer.writerow(("scenario", "scope", "comparison", *base, *agreement,
                          *(f"roster_purity_{method}" for method in purity)))
         for name, scene in summary.items():
@@ -259,10 +300,67 @@ def _write_projections(output, report, matrices):
                 for method, stats in metrics["comparisons"].items():
                     writer.writerow((name, scope, method, *(metrics[key] for key in base),
                                      *(stats[key] for key in agreement),
-                                     *(metrics["roster_purity"][key] for key in purity)))
+                                     *(metrics["roster_purity"].get(key) for key in purity)))
+    with (output / "clustering-validity.csv").open("w", newline="", encoding="utf-8-sig") as stream:
+        writer = csv.writer(stream)
+        writer.writerow((
+            "scenario", "scope", "eval_kind", "cluster_budget", "method", "k_eff", "cross_ep_hit_rate",
+            "norm_entropy", "silhouette", "roster_nmi", "win_metric", "win_r2_or_eta2",
+            "curr_hp_r2_or_eta2", "curr_hp_loeo_r2", "disc_return_r2_or_eta2", "disc_return_loeo_r2",
+            "same_action_hp_delta_r2_or_eta2", "same_action_short_rew_r2_or_eta2", "geom_centroid_r2",
+        ))
+        for name, scopes in validity_summary.items():
+            for scope, payload in scopes.items():
+                if not payload:
+                    continue
+                for method, kstat in payload["knn"].items():
+                    writer.writerow((
+                        name, scope, "cross_ep_5nn", "", method, "", "", "", "", "",
+                        kstat["win"]["acc"], kstat["win"]["r2"],
+                        kstat["curr_margin"]["r2"], "",
+                        kstat["disc_hp_return"]["r2"], "",
+                        kstat["same_action_hp_delta"]["r2"],
+                        kstat["same_action_short_rew"]["r2"],
+                        kstat["geom_centroid"]["r2"],
+                    ))
+                for k_str, by_method in payload["matched_k"].items():
+                    for method, cstat in by_method.items():
+                        m = cstat["metrics"]
+                        writer.writerow((
+                            name, scope, "matched_k_medoids", k_str, method,
+                            cstat["k_eff"], cstat["cross_ep_hit_rate"], cstat["norm_entropy"],
+                            cstat["silhouette"], cstat["roster_nmi"],
+                            m["win"]["loeo_acc"], m["win"]["eta2"],
+                            m["curr_margin"]["eta2"], m["curr_margin"]["loeo_r2"],
+                            m["disc_hp_return"]["eta2"], m["disc_hp_return"]["loeo_r2"],
+                            m["hp_delta"]["eta2"], m["short_rew"]["eta2"], "",
+                        ))
+                if payload.get("original_im_hash"):
+                    oh = payload["original_im_hash"]
+                    om = oh["metrics"]
+                    writer.writerow((
+                        name, scope, "original_im_hash", f"exact={oh['k_eff']}",
+                        "original-im-hash", oh["k_eff"], oh["cross_ep_hit_rate"], oh["norm_entropy"],
+                        oh["silhouette"], oh["roster_nmi"],
+                        om["win"]["loeo_acc"], om["win"]["eta2"],
+                        om["curr_margin"]["eta2"], om["curr_margin"]["loeo_r2"],
+                        om["disc_hp_return"]["eta2"], om["disc_hp_return"]["loeo_r2"],
+                        om["hp_delta"]["eta2"], om["short_rew"]["eta2"], "",
+                    ))
+                hb = payload["historical_bktree"]
+                hm = hb["metrics"]
+                writer.writerow((
+                    name, scope, "historical_bktree_2lvl", f"L1={hb['l1_clusters']}/L2={hb['l2_clusters']}",
+                    "bk-two-level(1.0/0.5)", hb["k_eff"], hb["cross_ep_hit_rate"], hb["norm_entropy"],
+                    hb["silhouette"], hb["roster_nmi"],
+                    hm["win"]["loeo_acc"], hm["win"]["eta2"],
+                    hm["curr_margin"]["eta2"], hm["curr_margin"]["loeo_r2"],
+                    hm["disc_hp_return"]["eta2"], hm["disc_hp_return"]["loeo_r2"],
+                    hm["hp_delta"]["eta2"], hm["short_rew"]["eta2"], "",
+                ))
 
 
-def _load_encoders(specifications, scenes, manifest, parser):
+def _load_encoders(specifications, kind, scenes, manifest, parser, flag_name):
     if not specifications:
         return {}
     from .upper_state.encoder import UpperEncoder
@@ -271,14 +369,14 @@ def _load_encoders(specifications, scenes, manifest, parser):
     for specification in specifications:
         name, separator, path = specification.partition("=")
         if not separator or not path or name not in scenes or name in encoders:
-            parser.error("Provide one --cnn-checkpoint SCENARIO=PATH per scenario.")
-        encoder = UpperEncoder("im-grid", Path(path))
+            parser.error(f"Provide one {flag_name} SCENARIO=PATH per scenario.")
+        encoder = UpperEncoder(kind, Path(path))
         fit = encoder.fit_manifest
         if fit["scenario"] != name or fit["probes_sha256"] != manifest["probes_sha256"]:
-            parser.error(f"The {name} CNN must be fitted on this archive with --scenario {name}.")
+            parser.error(f"The {name} {kind} checkpoint must be fitted on this archive with --scenario {name}.")
         encoders[name] = encoder
     if encoders.keys() != scenes.keys():
-        parser.error("Provide a CNN checkpoint for every scenario in the archive.")
+        parser.error(f"Provide a {kind} checkpoint for every scenario in the archive.")
     return encoders
 
 
@@ -289,19 +387,28 @@ def main():
     parser.add_argument("--draws", type=int, default=4000)
     parser.add_argument("--seed", type=int, default=1201)
     parser.add_argument("--cnn-checkpoint", action="append", metavar="SCENARIO=PATH")
+    parser.add_argument("--unit-set-checkpoint", action="append", metavar="SCENARIO=PATH")
+    parser.add_argument("--im-medoid-checkpoint", action="append", metavar="SCENARIO=PATH")
     args = parser.parse_args()
     if args.draws < 1 or not 0 <= args.seed < 2**32:
         parser.error("Use at least one draw and a nonnegative 32-bit seed.")
-    manifest, scenes = _archive(args.probes)
-    encoders = _load_encoders(args.cnn_checkpoint, scenes, manifest, parser)
-    if encoders:
+    manifest, scenes, episodes = _archive(args.probes)
+    cnn_encoders = _load_encoders(args.cnn_checkpoint, "im-grid", scenes, manifest, parser, "--cnn-checkpoint")
+    unit_set_encoders = _load_encoders(args.unit_set_checkpoint, "unit-set", scenes, manifest, parser, "--unit-set-checkpoint")
+    im_medoid_encoders = _load_encoders(args.im_medoid_checkpoint, "im-medoid", scenes, manifest, parser, "--im-medoid-checkpoint")
+    if cnn_encoders or unit_set_encoders:
         import torch
 
         torch.set_num_threads(1)
     scene_reports, distances = {}, {}
     with threadpool_limits(limits=1):
         for name, rows in sorted(scenes.items()):
-            scene_reports[name], matrices = _scene_report(name, rows, args.draws, args.seed, encoders.get(name))
+            scene_reports[name], matrices = _scene_report(
+                name, rows, episodes, args.draws, args.seed,
+                encoder=cnn_encoders.get(name),
+                unit_set_encoder=unit_set_encoders.get(name),
+                im_medoid_encoder=im_medoid_encoders.get(name),
+            )
             distances.update({f"{name}__{method}": matrix for method, matrix in matrices.items()})
     report = {
         "draws": args.draws, "seed": args.seed, "root_seed": manifest["root_seed"],
@@ -311,7 +418,7 @@ def main():
     output = args.output
     output.mkdir(parents=True, exist_ok=True)
     _write_tables(output, report)
-    if encoders:
+    if cnn_encoders:
         _write_projections(output, report, distances)
     write_json(output / "coverage-summary.json", {
         **{key: value for key, value in report.items() if key != "scenarios"},
